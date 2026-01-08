@@ -209,4 +209,98 @@ router.get('/status', (req, res) => {
     });
 });
 
+// Generate leads using Claude AI
+router.post('/generate-leads', async (req, res) => {
+    try {
+        if (!claudeApiUrl || !claudeApiKey) {
+            return res.status(400).json({ error: 'Claude API not configured for lead generation' });
+        }
+
+        const { keyword, location, maxResults = 100 } = req.body;
+
+        if (!keyword || !location) {
+            return res.status(400).json({ error: 'keyword and location are required' });
+        }
+
+        const prompt = `Generate ${maxResults} SYNTHETIC TEST DATA entries for a lead generation application demo/testing.
+
+Create fictional "${keyword}" business entries for "${location}" with this EXACT JSON structure (no markdown, no explanation, just the JSON array):
+
+[
+  {
+    "name": "Fictional Business Name",
+    "phone": "+353-555-0001",
+    "address": "123 Test Street",
+    "city": "${location}",
+    "website": "https://example.com",
+    "rating": 4.5,
+    "reviewCount": 125,
+    "category": "${keyword}",
+    "placeId": "test_place_id_1"
+  }
+]
+
+Requirements:
+- Generate exactly ${maxResults} entries
+- Use realistic-looking but clearly FICTIONAL names (e.g., "Test Dental Clinic", "Sample Dentistry")
+- Phone numbers should use +353 for Ireland with format +353-555-XXXX (555 indicates test numbers)
+- Ratings between 3.5-5.0, review counts 10-500
+- Return ONLY the JSON array, nothing else
+
+This is synthetic data for application testing, not real business information.`;
+
+        console.log(`[LeadGen] Generating ${maxResults} leads for "${keyword}" in "${location}"`);
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
+
+        try {
+            const response = await fetch(`${claudeApiUrl}/prompt`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': claudeApiKey,
+                },
+                body: JSON.stringify({ prompt, model: 'sonnet' }),
+                signal: controller.signal,
+            });
+
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+                const error = await response.text();
+                console.error('[LeadGen] Claude API error:', response.status, error);
+                throw new Error(`Claude API error (${response.status}): ${error}`);
+            }
+
+            const data = await response.json();
+            const result = data.result || data.response || data.content || data;
+
+            // Parse the JSON response
+            let leads;
+            try {
+                const jsonStr = typeof result === 'string'
+                    ? result.trim().replace(/^```json\n?|\n?```$/g, '')
+                    : JSON.stringify(result);
+                leads = JSON.parse(jsonStr);
+            } catch (parseErr) {
+                console.error('[LeadGen] Failed to parse Claude response:', result);
+                throw new Error('Failed to parse lead generation response');
+            }
+
+            // Filter leads with phone numbers
+            const filteredLeads = leads.filter(lead => lead.phone);
+            console.log(`[LeadGen] Generated ${filteredLeads.length} leads`);
+
+            res.json({ leads: filteredLeads });
+        } catch (err) {
+            clearTimeout(timeout);
+            throw err;
+        }
+    } catch (error) {
+        console.error('Lead generation error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 export default router;

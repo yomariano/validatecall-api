@@ -3,7 +3,6 @@ import express from 'express';
 import cors from 'cors';
 
 // Import routes
-import apifyRoutes from './routes/apify.js';
 import supabaseRoutes from './routes/supabase.js';
 import vapiRoutes from './routes/vapi.js';
 import stripeRoutes from './routes/stripe.js';
@@ -55,7 +54,6 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         services: {
             supabase: !!process.env.SUPABASE_URL,
-            apify: !!process.env.APIFY_TOKEN,
             vapi: !!process.env.VAPI_API_KEY,
             stripe: !!process.env.STRIPE_SECRET_KEY,
             twilio: !!process.env.TWILIO_ACCOUNT_SID,
@@ -66,7 +64,6 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
-app.use('/api/apify', apifyRoutes);
 app.use('/api/supabase', supabaseRoutes);
 app.use('/api/vapi', vapiRoutes);
 app.use('/api/stripe', stripeRoutes);
