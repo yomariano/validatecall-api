@@ -10,12 +10,14 @@ const supabase = createClient(
 );
 
 /**
- * Check if user can generate leads (free tier limit check)
+ * Atomically reserve leads for a free tier user
+ * This prevents race conditions by checking AND incrementing in a single operation
+ * Returns the number of leads that can actually be generated (capped to remaining)
  */
-async function checkFreeTierLeadsLimit(userId, count = 1) {
-    if (!userId) return { canGenerate: true, isFreeTier: false }; // No user = bypass
+async function reserveFreeTierLeads(userId, requestedCount = 1) {
+    if (!userId) return { canGenerate: true, isFreeTier: false, reserved: requestedCount };
 
-    // Check for active subscription
+    // Check for active subscription first
     const { data: subscription } = await supabase
         .from('user_subscriptions')
         .select('status')
@@ -24,28 +26,125 @@ async function checkFreeTierLeadsLimit(userId, count = 1) {
         .single();
 
     if (subscription) {
-        return { canGenerate: true, isFreeTier: false };
+        return { canGenerate: true, isFreeTier: false, reserved: requestedCount };
     }
 
-    // Get free tier usage
-    const { data: usage } = await supabase
+    // Get current usage
+    let { data: usage } = await supabase
         .from('free_tier_usage')
         .select('leads_used, leads_limit')
         .eq('user_id', userId)
         .single();
 
+    // Create record if doesn't exist
     if (!usage) {
-        // No record = fresh user
-        return { canGenerate: count <= 10, isFreeTier: true, remaining: 10 };
+        const { data: newUsage, error: createError } = await supabase
+            .from('free_tier_usage')
+            .insert({ user_id: userId, leads_used: 0 })
+            .select()
+            .single();
+
+        if (createError) {
+            console.error('Error creating usage record:', createError);
+            return { canGenerate: false, isFreeTier: true, remaining: 0, error: 'Failed to create usage record' };
+        }
+        usage = newUsage;
     }
 
-    const remaining = Math.max(0, usage.leads_limit - usage.leads_used);
+    const currentUsed = usage.leads_used;
+    const limit = usage.leads_limit;
+    const remaining = Math.max(0, limit - currentUsed);
+
+    // If no remaining leads, reject
+    if (remaining === 0) {
+        return {
+            canGenerate: false,
+            isFreeTier: true,
+            remaining: 0,
+            used: currentUsed,
+            limit: limit
+        };
+    }
+
+    // Cap the requested count to remaining
+    const toReserve = Math.min(requestedCount, remaining);
+    const newTotal = currentUsed + toReserve;
+
+    // ATOMIC: Update with condition to prevent race condition
+    // Only update if the current value matches what we read (optimistic locking)
+    const { data: updated, error: updateError } = await supabase
+        .from('free_tier_usage')
+        .update({ leads_used: newTotal })
+        .eq('user_id', userId)
+        .eq('leads_used', currentUsed) // Optimistic lock: only update if unchanged
+        .select()
+        .single();
+
+    if (updateError || !updated) {
+        // Race condition detected - another request modified the value
+        // Retry once with fresh data
+        console.log('[LeadGen] Race condition detected, retrying reservation...');
+
+        const { data: freshUsage } = await supabase
+            .from('free_tier_usage')
+            .select('leads_used, leads_limit')
+            .eq('user_id', userId)
+            .single();
+
+        if (!freshUsage) {
+            return { canGenerate: false, isFreeTier: true, remaining: 0, error: 'Usage record not found' };
+        }
+
+        const freshRemaining = Math.max(0, freshUsage.leads_limit - freshUsage.leads_used);
+
+        if (freshRemaining === 0) {
+            return {
+                canGenerate: false,
+                isFreeTier: true,
+                remaining: 0,
+                used: freshUsage.leads_used,
+                limit: freshUsage.leads_limit
+            };
+        }
+
+        const toReserveRetry = Math.min(requestedCount, freshRemaining);
+        const newTotalRetry = freshUsage.leads_used + toReserveRetry;
+
+        const { data: retryUpdate, error: retryError } = await supabase
+            .from('free_tier_usage')
+            .update({ leads_used: newTotalRetry })
+            .eq('user_id', userId)
+            .eq('leads_used', freshUsage.leads_used)
+            .select()
+            .single();
+
+        if (retryError || !retryUpdate) {
+            // Still failing, reject the request
+            return {
+                canGenerate: false,
+                isFreeTier: true,
+                remaining: freshRemaining,
+                error: 'Unable to reserve leads due to concurrent requests. Please try again.'
+            };
+        }
+
+        return {
+            canGenerate: true,
+            isFreeTier: true,
+            reserved: toReserveRetry,
+            remaining: freshRemaining - toReserveRetry,
+            used: newTotalRetry,
+            limit: freshUsage.leads_limit
+        };
+    }
+
     return {
-        canGenerate: remaining > 0,
+        canGenerate: true,
         isFreeTier: true,
-        remaining,
-        used: usage.leads_used,
-        limit: usage.leads_limit
+        reserved: toReserve,
+        remaining: remaining - toReserve,
+        used: newTotal,
+        limit: limit
     };
 }
 
@@ -304,22 +403,23 @@ router.post('/generate-leads', async (req, res) => {
             return res.status(400).json({ error: 'keyword and location are required' });
         }
 
-        // Check free tier limits
-        const limitCheck = await checkFreeTierLeadsLimit(userId, maxResults);
-        if (!limitCheck.canGenerate) {
+        // Atomically reserve leads (prevents race conditions)
+        const reservation = await reserveFreeTierLeads(userId, maxResults);
+
+        if (!reservation.canGenerate) {
             return res.status(403).json({
-                error: 'Free tier lead limit reached',
+                error: reservation.error || 'Free tier lead limit reached',
                 upgradeRequired: true,
                 isFreeTier: true,
-                used: limitCheck.used,
-                limit: limitCheck.limit,
-                remaining: limitCheck.remaining
+                used: reservation.used,
+                limit: reservation.limit,
+                remaining: reservation.remaining
             });
         }
 
-        // For free tier, cap maxResults to remaining limit
-        const effectiveMaxResults = limitCheck.isFreeTier
-            ? Math.min(maxResults, limitCheck.remaining)
+        // Use the reserved count (already capped to remaining for free tier)
+        const effectiveMaxResults = reservation.isFreeTier
+            ? reservation.reserved
             : maxResults;
 
         const prompt = `Generate ${effectiveMaxResults} SYNTHETIC TEST DATA entries for a lead generation application demo/testing.
@@ -390,15 +490,12 @@ This is synthetic data for application testing, not real business information.`;
 
             // Filter leads with phone numbers
             const filteredLeads = leads.filter(lead => lead.phone);
-            console.log(`[LeadGen] Generated ${filteredLeads.length} leads`);
+            console.log(`[LeadGen] Generated ${filteredLeads.length} leads (reserved: ${reservation.reserved})`);
 
-            // Increment free tier usage
-            if (userId && filteredLeads.length > 0) {
-                await incrementLeadsUsed(userId, filteredLeads.length);
-                console.log(`[LeadGen] Incremented free tier usage for ${userId} by ${filteredLeads.length}`);
-            }
+            // Note: Usage was already reserved atomically before generation
+            // No need to increment again - prevents race conditions
 
-            res.json({ leads: filteredLeads, isFreeTier: limitCheck.isFreeTier });
+            res.json({ leads: filteredLeads, isFreeTier: reservation.isFreeTier });
         } catch (err) {
             clearTimeout(timeout);
             throw err;

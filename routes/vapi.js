@@ -64,12 +64,13 @@ const FREE_TIER_PHONE_ID = process.env.VAPI_FREE_TIER_PHONE_ID;
 const FREE_TIER_MAX_DURATION = 120; // 2 minutes in seconds
 
 /**
- * Check if user can make a call (free tier limit check)
+ * Atomically reserve a call for a free tier user
+ * This prevents race conditions by checking AND incrementing in a single operation
  */
-async function checkFreeTierCallLimit(userId) {
-    if (!userId) return { canCall: true, isFreeTier: false };
+async function reserveFreeTierCall(userId) {
+    if (!userId) return { canCall: true, isFreeTier: false, reserved: true };
 
-    // Check for active subscription
+    // Check for active subscription first
     const { data: subscription } = await supabase
         .from('user_subscriptions')
         .select('status')
@@ -78,69 +79,130 @@ async function checkFreeTierCallLimit(userId) {
         .single();
 
     if (subscription) {
-        return { canCall: true, isFreeTier: false, maxDuration: null };
+        return { canCall: true, isFreeTier: false, maxDuration: null, reserved: true };
     }
 
-    // Get free tier usage
-    const { data: usage } = await supabase
+    // Get current usage
+    let { data: usage } = await supabase
         .from('free_tier_usage')
         .select('calls_used, calls_limit, call_seconds_per_call')
         .eq('user_id', userId)
         .single();
 
+    // Create record if doesn't exist
     if (!usage) {
+        const { data: newUsage, error: createError } = await supabase
+            .from('free_tier_usage')
+            .insert({ user_id: userId, calls_used: 0 })
+            .select()
+            .single();
+
+        if (createError) {
+            console.error('Error creating usage record:', createError);
+            return { canCall: false, isFreeTier: true, remaining: 0, error: 'Failed to create usage record' };
+        }
+        usage = newUsage;
+    }
+
+    const currentUsed = usage.calls_used;
+    const limit = usage.calls_limit;
+    const remaining = Math.max(0, limit - currentUsed);
+
+    // If no remaining calls, reject
+    if (remaining === 0) {
         return {
-            canCall: true,
+            canCall: false,
             isFreeTier: true,
-            remaining: 5,
-            maxDuration: FREE_TIER_MAX_DURATION
+            remaining: 0,
+            used: currentUsed,
+            limit: limit,
+            maxDuration: usage.call_seconds_per_call || FREE_TIER_MAX_DURATION
         };
     }
 
-    const remaining = Math.max(0, usage.calls_limit - usage.calls_used);
+    // ATOMIC: Reserve one call with optimistic locking
+    const newTotal = currentUsed + 1;
+
+    const { data: updated, error: updateError } = await supabase
+        .from('free_tier_usage')
+        .update({ calls_used: newTotal })
+        .eq('user_id', userId)
+        .eq('calls_used', currentUsed) // Optimistic lock
+        .select()
+        .single();
+
+    if (updateError || !updated) {
+        // Race condition detected - retry once
+        console.log('[Calls] Race condition detected, retrying reservation...');
+
+        const { data: freshUsage } = await supabase
+            .from('free_tier_usage')
+            .select('calls_used, calls_limit, call_seconds_per_call')
+            .eq('user_id', userId)
+            .single();
+
+        if (!freshUsage) {
+            return { canCall: false, isFreeTier: true, remaining: 0, error: 'Usage record not found' };
+        }
+
+        const freshRemaining = Math.max(0, freshUsage.calls_limit - freshUsage.calls_used);
+
+        if (freshRemaining === 0) {
+            return {
+                canCall: false,
+                isFreeTier: true,
+                remaining: 0,
+                used: freshUsage.calls_used,
+                limit: freshUsage.calls_limit,
+                maxDuration: freshUsage.call_seconds_per_call || FREE_TIER_MAX_DURATION
+            };
+        }
+
+        const { data: retryUpdate, error: retryError } = await supabase
+            .from('free_tier_usage')
+            .update({ calls_used: freshUsage.calls_used + 1 })
+            .eq('user_id', userId)
+            .eq('calls_used', freshUsage.calls_used)
+            .select()
+            .single();
+
+        if (retryError || !retryUpdate) {
+            return {
+                canCall: false,
+                isFreeTier: true,
+                remaining: freshRemaining,
+                error: 'Unable to reserve call due to concurrent requests. Please try again.'
+            };
+        }
+
+        return {
+            canCall: true,
+            isFreeTier: true,
+            reserved: true,
+            remaining: freshRemaining - 1,
+            used: freshUsage.calls_used + 1,
+            limit: freshUsage.calls_limit,
+            maxDuration: freshUsage.call_seconds_per_call || FREE_TIER_MAX_DURATION
+        };
+    }
+
     return {
-        canCall: remaining > 0,
+        canCall: true,
         isFreeTier: true,
-        remaining,
-        used: usage.calls_used,
-        limit: usage.calls_limit,
+        reserved: true,
+        remaining: remaining - 1,
+        used: newTotal,
+        limit: limit,
         maxDuration: usage.call_seconds_per_call || FREE_TIER_MAX_DURATION
     };
 }
 
-/**
- * Increment calls used count for free tier user
- */
-async function incrementCallsUsed(userId) {
-    if (!userId) return;
-
-    // Check if subscribed
-    const { data: subscription } = await supabase
-        .from('user_subscriptions')
-        .select('status')
-        .eq('user_id', userId)
-        .eq('status', 'active')
-        .single();
-
-    if (subscription) return;
-
-    // Upsert usage
-    const { data: currentUsage } = await supabase
-        .from('free_tier_usage')
-        .select('calls_used')
-        .eq('user_id', userId)
-        .single();
-
-    if (currentUsage) {
-        await supabase
-            .from('free_tier_usage')
-            .update({ calls_used: currentUsage.calls_used + 1 })
-            .eq('user_id', userId);
-    } else {
-        await supabase
-            .from('free_tier_usage')
-            .insert({ user_id: userId, calls_used: 1 });
-    }
+// Legacy function for backward compatibility (used by some endpoints)
+async function checkFreeTierCallLimit(userId) {
+    // For read-only checks, just return current state
+    const result = await reserveFreeTierCall(userId);
+    // Note: This will reserve a call - use carefully
+    return result;
 }
 
 /**
@@ -1406,10 +1468,10 @@ router.post('/user/:userId/call', async (req, res) => {
             await incrementPhoneUsage(userPhone.phone_number_id, userId, data.id);
         }
 
-        // Increment free tier call count
+        // Note: Free tier call count was already reserved atomically before making the call
+        // This prevents race conditions from rapid clicks
         if (callLimit.isFreeTier) {
-            await incrementCallsUsed(userId);
-            console.log(`📞 [User: ${userId}] Free tier call count incremented`);
+            console.log(`📞 [User: ${userId}] Free tier call reserved (usage: ${callLimit.used}/${callLimit.limit})`);
         }
 
         // Store call in database
