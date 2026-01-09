@@ -1,6 +1,88 @@
 import { Router } from 'express';
+import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
+
+// Initialize Supabase for free tier checks
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+/**
+ * Check if user can generate leads (free tier limit check)
+ */
+async function checkFreeTierLeadsLimit(userId, count = 1) {
+    if (!userId) return { canGenerate: true, isFreeTier: false }; // No user = bypass
+
+    // Check for active subscription
+    const { data: subscription } = await supabase
+        .from('user_subscriptions')
+        .select('status')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .single();
+
+    if (subscription) {
+        return { canGenerate: true, isFreeTier: false };
+    }
+
+    // Get free tier usage
+    const { data: usage } = await supabase
+        .from('free_tier_usage')
+        .select('leads_used, leads_limit')
+        .eq('user_id', userId)
+        .single();
+
+    if (!usage) {
+        // No record = fresh user
+        return { canGenerate: count <= 10, isFreeTier: true, remaining: 10 };
+    }
+
+    const remaining = Math.max(0, usage.leads_limit - usage.leads_used);
+    return {
+        canGenerate: remaining > 0,
+        isFreeTier: true,
+        remaining,
+        used: usage.leads_used,
+        limit: usage.leads_limit
+    };
+}
+
+/**
+ * Increment leads used count for free tier user
+ */
+async function incrementLeadsUsed(userId, count) {
+    if (!userId) return;
+
+    // Check if subscribed (don't track for paid users)
+    const { data: subscription } = await supabase
+        .from('user_subscriptions')
+        .select('status')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .single();
+
+    if (subscription) return;
+
+    // Upsert usage
+    const { data: currentUsage } = await supabase
+        .from('free_tier_usage')
+        .select('leads_used')
+        .eq('user_id', userId)
+        .single();
+
+    if (currentUsage) {
+        await supabase
+            .from('free_tier_usage')
+            .update({ leads_used: currentUsage.leads_used + count })
+            .eq('user_id', userId);
+    } else {
+        await supabase
+            .from('free_tier_usage')
+            .insert({ user_id: userId, leads_used: count });
+    }
+}
 
 // Clean up URL and API key (remove ALL quotes, semicolons, whitespace)
 const cleanEnvVar = (val) => val?.replace(/["';]/g, '').trim();
@@ -216,13 +298,31 @@ router.post('/generate-leads', async (req, res) => {
             return res.status(400).json({ error: 'Claude API not configured for lead generation' });
         }
 
-        const { keyword, location, maxResults = 100 } = req.body;
+        const { keyword, location, maxResults = 100, userId } = req.body;
 
         if (!keyword || !location) {
             return res.status(400).json({ error: 'keyword and location are required' });
         }
 
-        const prompt = `Generate ${maxResults} SYNTHETIC TEST DATA entries for a lead generation application demo/testing.
+        // Check free tier limits
+        const limitCheck = await checkFreeTierLeadsLimit(userId, maxResults);
+        if (!limitCheck.canGenerate) {
+            return res.status(403).json({
+                error: 'Free tier lead limit reached',
+                upgradeRequired: true,
+                isFreeTier: true,
+                used: limitCheck.used,
+                limit: limitCheck.limit,
+                remaining: limitCheck.remaining
+            });
+        }
+
+        // For free tier, cap maxResults to remaining limit
+        const effectiveMaxResults = limitCheck.isFreeTier
+            ? Math.min(maxResults, limitCheck.remaining)
+            : maxResults;
+
+        const prompt = `Generate ${effectiveMaxResults} SYNTHETIC TEST DATA entries for a lead generation application demo/testing.
 
 Create fictional "${keyword}" business entries for "${location}" with this EXACT JSON structure (no markdown, no explanation, just the JSON array):
 
@@ -241,7 +341,7 @@ Create fictional "${keyword}" business entries for "${location}" with this EXACT
 ]
 
 Requirements:
-- Generate exactly ${maxResults} entries
+- Generate exactly ${effectiveMaxResults} entries
 - Use realistic-looking but clearly FICTIONAL names (e.g., "Test Dental Clinic", "Sample Dentistry")
 - Phone numbers should use +353 for Ireland with format +353-555-XXXX (555 indicates test numbers)
 - Ratings between 3.5-5.0, review counts 10-500
@@ -292,7 +392,13 @@ This is synthetic data for application testing, not real business information.`;
             const filteredLeads = leads.filter(lead => lead.phone);
             console.log(`[LeadGen] Generated ${filteredLeads.length} leads`);
 
-            res.json({ leads: filteredLeads });
+            // Increment free tier usage
+            if (userId && filteredLeads.length > 0) {
+                await incrementLeadsUsed(userId, filteredLeads.length);
+                console.log(`[LeadGen] Incremented free tier usage for ${userId} by ${filteredLeads.length}`);
+            }
+
+            res.json({ leads: filteredLeads, isFreeTier: limitCheck.isFreeTier });
         } catch (err) {
             clearTimeout(timeout);
             throw err;

@@ -53,6 +53,96 @@ async function makeVoIPcloudCall(destinationNumber, callerId) {
     return response.json();
 }
 
+// Initialize Supabase for free tier checks
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// Shared demo phone for free tier users
+const FREE_TIER_PHONE_ID = process.env.VAPI_FREE_TIER_PHONE_ID;
+const FREE_TIER_MAX_DURATION = 120; // 2 minutes in seconds
+
+/**
+ * Check if user can make a call (free tier limit check)
+ */
+async function checkFreeTierCallLimit(userId) {
+    if (!userId) return { canCall: true, isFreeTier: false };
+
+    // Check for active subscription
+    const { data: subscription } = await supabase
+        .from('user_subscriptions')
+        .select('status')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .single();
+
+    if (subscription) {
+        return { canCall: true, isFreeTier: false, maxDuration: null };
+    }
+
+    // Get free tier usage
+    const { data: usage } = await supabase
+        .from('free_tier_usage')
+        .select('calls_used, calls_limit, call_seconds_per_call')
+        .eq('user_id', userId)
+        .single();
+
+    if (!usage) {
+        return {
+            canCall: true,
+            isFreeTier: true,
+            remaining: 5,
+            maxDuration: FREE_TIER_MAX_DURATION
+        };
+    }
+
+    const remaining = Math.max(0, usage.calls_limit - usage.calls_used);
+    return {
+        canCall: remaining > 0,
+        isFreeTier: true,
+        remaining,
+        used: usage.calls_used,
+        limit: usage.calls_limit,
+        maxDuration: usage.call_seconds_per_call || FREE_TIER_MAX_DURATION
+    };
+}
+
+/**
+ * Increment calls used count for free tier user
+ */
+async function incrementCallsUsed(userId) {
+    if (!userId) return;
+
+    // Check if subscribed
+    const { data: subscription } = await supabase
+        .from('user_subscriptions')
+        .select('status')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .single();
+
+    if (subscription) return;
+
+    // Upsert usage
+    const { data: currentUsage } = await supabase
+        .from('free_tier_usage')
+        .select('calls_used')
+        .eq('user_id', userId)
+        .single();
+
+    if (currentUsage) {
+        await supabase
+            .from('free_tier_usage')
+            .update({ calls_used: currentUsage.calls_used + 1 })
+            .eq('user_id', userId);
+    } else {
+        await supabase
+            .from('free_tier_usage')
+            .insert({ user_id: userId, calls_used: 1 });
+    }
+}
+
 /**
  * Determine the call outcome based on endedReason and transcript
  * Returns: 'human', 'voicemail', 'ivr', 'no_answer', 'busy', 'failed'
@@ -1181,9 +1271,23 @@ router.post('/user/:userId/call', async (req, res) => {
             return res.status(400).json({ error: 'phoneNumber is required' });
         }
 
+        // Check free tier call limits
+        const callLimit = await checkFreeTierCallLimit(userId);
+        if (!callLimit.canCall) {
+            return res.status(403).json({
+                error: 'Free tier call limit reached',
+                upgradeRequired: true,
+                isFreeTier: true,
+                used: callLimit.used,
+                limit: callLimit.limit,
+                remaining: callLimit.remaining
+            });
+        }
+
         // Debug logging
         console.log(`📞 [User: ${userId}] Call request for: "${phoneNumber}"`);
         console.log(`   Is Irish: ${isIrishNumber(phoneNumber)}, VoIPcloud configured: ${!!VOIPCLOUD_TOKEN}`);
+        console.log(`   Free tier: ${callLimit.isFreeTier}, Max duration: ${callLimit.maxDuration || 'unlimited'}`);
 
         // Route Irish calls through VoIPcloud
         if (isIrishNumber(phoneNumber)) {
@@ -1223,20 +1327,31 @@ router.post('/user/:userId/call', async (req, res) => {
         }
 
         // Get next available phone number for this user from database
-        const userPhone = await getUserPhoneNumber(userId);
+        let userPhone = await getUserPhoneNumber(userId);
+        let usingFreeTierPhone = false;
 
         if (!userPhone) {
-            const stats = await getUserPhoneStats(userId);
-            return res.status(429).json({
-                error: stats.totalNumbers === 0
-                    ? 'No phone numbers configured. Please subscribe to a plan.'
-                    : 'All phone numbers have reached their daily limit',
-                remainingCapacity: stats.remainingToday,
-                totalNumbers: stats.totalNumbers,
-                suggestion: stats.totalNumbers === 0
-                    ? 'Subscribe to a plan to get phone numbers'
-                    : 'Wait until tomorrow or upgrade your plan for more capacity'
-            });
+            // For free tier users, use shared demo phone
+            if (callLimit.isFreeTier && FREE_TIER_PHONE_ID) {
+                console.log(`📞 [User: ${userId}] Using shared free tier phone`);
+                userPhone = {
+                    phone_number_id: FREE_TIER_PHONE_ID,
+                    phone_number: 'Free Tier Demo'
+                };
+                usingFreeTierPhone = true;
+            } else {
+                const stats = await getUserPhoneStats(userId);
+                return res.status(429).json({
+                    error: stats.totalNumbers === 0
+                        ? 'No phone numbers configured. Please subscribe to a plan.'
+                        : 'All phone numbers have reached their daily limit',
+                    remainingCapacity: stats.remainingToday,
+                    totalNumbers: stats.totalNumbers,
+                    suggestion: stats.totalNumbers === 0
+                        ? 'Subscribe to a plan to get phone numbers'
+                        : 'Wait until tomorrow or upgrade your plan for more capacity'
+                });
+            }
         }
 
         // Build the call payload
@@ -1266,6 +1381,12 @@ router.post('/user/:userId/call', async (req, res) => {
             callPayload.assistant = customAssistant || createMarketResearchAssistant(productIdea, companyContext);
         }
 
+        // Enforce max duration for free tier users
+        if (callLimit.isFreeTier && callLimit.maxDuration) {
+            callPayload.maxDurationSeconds = callLimit.maxDuration;
+            console.log(`📞 [User: ${userId}] Free tier: max duration set to ${callLimit.maxDuration}s`);
+        }
+
         console.log(`📞 [User: ${userId}] Calling ${phoneNumber} from ${userPhone.phone_number}`);
 
         const response = await fetch(`${VAPI_API_URL}/call/phone`, {
@@ -1286,8 +1407,16 @@ router.post('/user/:userId/call', async (req, res) => {
 
         const data = await response.json();
 
-        // Increment usage in database
-        await incrementPhoneUsage(userPhone.phone_number_id, userId, data.id);
+        // Increment phone usage in database (for subscribed users)
+        if (!usingFreeTierPhone) {
+            await incrementPhoneUsage(userPhone.phone_number_id, userId, data.id);
+        }
+
+        // Increment free tier call count
+        if (callLimit.isFreeTier) {
+            await incrementCallsUsed(userId);
+            console.log(`📞 [User: ${userId}] Free tier call count incremented`);
+        }
 
         // Store call in database
         await supabase.from('calls').insert({
@@ -1310,7 +1439,13 @@ router.post('/user/:userId/call', async (req, res) => {
                 phoneNumberIdUsed: userPhone.phone_number_id,
                 phoneNumberUsed: userPhone.phone_number,
                 remainingCapacity: stats.remainingToday,
-            }
+            },
+            _freeTier: callLimit.isFreeTier ? {
+                isFreeTier: true,
+                callsUsed: (callLimit.used || 0) + 1,
+                callsRemaining: Math.max(0, (callLimit.remaining || 5) - 1),
+                maxDuration: callLimit.maxDuration
+            } : null
         });
     } catch (error) {
         console.error('Vapi user call error:', error);

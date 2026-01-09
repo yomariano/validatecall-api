@@ -8,6 +8,7 @@ import vapiRoutes from './routes/vapi.js';
 import stripeRoutes from './routes/stripe.js';
 import scheduledRoutes from './routes/scheduled.js';
 import claudeRoutes from './routes/claude.js';
+import usageRoutes from './routes/usage.js';
 
 // Import services
 import callScheduler from './services/callScheduler.js';
@@ -69,6 +70,7 @@ app.use('/api/vapi', vapiRoutes);
 app.use('/api/stripe', stripeRoutes);
 app.use('/api/scheduled', scheduledRoutes);
 app.use('/api/claude', claudeRoutes);
+app.use('/api/usage', usageRoutes);
 
 // 404 handler
 app.use((req, res) => {
