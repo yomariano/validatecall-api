@@ -68,6 +68,7 @@ app.get('/health', (req, res) => {
 app.use('/api/supabase', supabaseRoutes);
 app.use('/api/vapi', vapiRoutes);
 app.use('/api/stripe', stripeRoutes);
+app.use('/api/billing', stripeRoutes);  // Alias for billing endpoints
 app.use('/api/scheduled', scheduledRoutes);
 app.use('/api/claude', claudeRoutes);
 app.use('/api/usage', usageRoutes);

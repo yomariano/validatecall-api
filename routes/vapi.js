@@ -209,12 +209,6 @@ function determineCallOutcome(endedReason, transcript, messages) {
     return 'human';
 }
 
-// Initialize Supabase for multi-tenant phone rotation
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
 // =============================================
 // MULTI-TENANT PHONE ROTATION (Database-based)
 // =============================================

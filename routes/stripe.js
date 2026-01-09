@@ -463,6 +463,57 @@ router.post('/provision/:userId', async (req, res) => {
 });
 
 /**
+ * Create Stripe Customer Portal session
+ * Allows users to manage their subscription (cancel, update payment, etc)
+ */
+router.post('/portal', async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader?.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const token = authHeader.split(' ')[1];
+
+        // Get user from token
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+
+        // Get user's Stripe customer ID from subscription
+        const { data: subscription, error: subError } = await supabase
+            .from('user_subscriptions')
+            .select('stripe_customer_id')
+            .eq('user_id', user.id)
+            .single();
+
+        if (subError || !subscription?.stripe_customer_id) {
+            return res.status(404).json({ error: 'No subscription found' });
+        }
+
+        if (!STRIPE_SECRET_KEY) {
+            return res.status(500).json({ error: 'Stripe not configured' });
+        }
+
+        // Dynamic import of Stripe
+        const Stripe = (await import('stripe')).default;
+        const stripe = new Stripe(STRIPE_SECRET_KEY);
+
+        // Create customer portal session
+        const session = await stripe.billingPortal.sessions.create({
+            customer: subscription.stripe_customer_id,
+            return_url: req.body.returnUrl || `${process.env.FRONTEND_URL || 'https://voicefleet.ai'}/billing`,
+        });
+
+        res.json({ url: session.url });
+    } catch (error) {
+        console.error('Failed to create portal session:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * Check Stripe configuration status
  */
 router.get('/status', (req, res) => {
