@@ -1,5 +1,13 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
+import {
+    getAMDConfig,
+    determineCallOutcome,
+    AMD_SYSTEM_PROMPT_INSTRUCTIONS,
+    END_CALL_TOOL,
+    DEFAULT_AMD_PRESET,
+    AMD_PRESETS
+} from '../config/amd.js';
 
 const router = Router();
 
@@ -205,71 +213,8 @@ async function checkFreeTierCallLimit(userId) {
     return result;
 }
 
-/**
- * Determine the call outcome based on endedReason and transcript
- * Returns: 'human', 'voicemail', 'ivr', 'no_answer', 'busy', 'failed'
- */
-function determineCallOutcome(endedReason, transcript, messages) {
-    // Check VAPI's endedReason first
-    const reason = (endedReason || '').toLowerCase();
-
-    // Voicemail detection via AMD
-    if (reason.includes('voicemail') || reason.includes('machine')) {
-        return 'voicemail';
-    }
-
-    // No answer / busy signals
-    if (reason.includes('no-answer') || reason.includes('timeout')) {
-        return 'no_answer';
-    }
-    if (reason.includes('busy')) {
-        return 'busy';
-    }
-    if (reason.includes('failed') || reason.includes('error')) {
-        return 'failed';
-    }
-
-    // Check if endCall function was called with IVR reason
-    if (messages && Array.isArray(messages)) {
-        for (const msg of messages) {
-            if (msg.role === 'tool_calls' || msg.toolCalls) {
-                const toolCalls = msg.toolCalls || msg.tool_calls || [];
-                for (const tool of toolCalls) {
-                    if (tool.function?.name === 'endCall') {
-                        const args = typeof tool.function.arguments === 'string'
-                            ? JSON.parse(tool.function.arguments)
-                            : tool.function.arguments;
-                        if (args?.reason === 'ivr_detected') {
-                            return 'ivr';
-                        }
-                        if (args?.reason === 'voicemail_detected') {
-                            return 'voicemail';
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Check transcript for IVR patterns (fallback detection)
-    const transcriptLower = (transcript || '').toLowerCase();
-    const ivrPatterns = [
-        'press 1', 'press 2', 'press 3', 'press 4',
-        'for sales', 'for support', 'for billing',
-        'your call is important', 'please hold',
-        'all representatives are busy', 'leave a message',
-        'after the beep', 'after the tone'
-    ];
-
-    for (const pattern of ivrPatterns) {
-        if (transcriptLower.includes(pattern)) {
-            return 'ivr';
-        }
-    }
-
-    // Default: assume human interaction
-    return 'human';
-}
+// Note: determineCallOutcome is now imported from ../config/amd.js
+// This provides enhanced detection with more patterns and better accuracy
 
 // =============================================
 // MULTI-TENANT PHONE ROTATION (Database-based)
@@ -488,6 +433,29 @@ router.get('/status', (req, res) => {
     });
 });
 
+// Get AMD (Answering Machine Detection) presets
+router.get('/amd-presets', (req, res) => {
+    res.json({
+        presets: Object.keys(AMD_PRESETS).map(key => ({
+            name: key,
+            config: AMD_PRESETS[key],
+            description: getAMDPresetDescription(key),
+        })),
+        default: DEFAULT_AMD_PRESET,
+    });
+});
+
+// Helper function for AMD preset descriptions
+function getAMDPresetDescription(preset) {
+    const descriptions = {
+        aggressive: 'Fastest detection (5s timeout). May have more false positives. Best for high-volume calling where cost savings are critical.',
+        balanced: 'Recommended. Good balance of speed (10s timeout) and accuracy. Suitable for most use cases.',
+        conservative: 'Slower detection (15s timeout) but fewer false positives. Use when avoiding hanging up on humans is critical.',
+        disabled: 'No answering machine detection. Calls will continue regardless of who answers.',
+    };
+    return descriptions[preset] || 'No description available';
+}
+
 // =============================================
 // VAPI WEBHOOK - Receives call updates and transcripts
 // =============================================
@@ -592,8 +560,13 @@ router.get('/phone-stats', (req, res) => {
     });
 });
 
-// Create market research assistant configuration
-const createMarketResearchAssistant = (productIdea, companyContext) => ({
+/**
+ * Create market research assistant configuration
+ * @param {string} productIdea - The product idea to research
+ * @param {string} companyContext - Company context information
+ * @param {string} amdPreset - AMD preset: 'aggressive', 'balanced', 'conservative', 'disabled'
+ */
+const createMarketResearchAssistant = (productIdea, companyContext, amdPreset = DEFAULT_AMD_PRESET) => ({
     name: "Market Research Agent",
     model: {
         provider: "openai",
@@ -609,19 +582,7 @@ ${productIdea}
 
 COMPANY CONTEXT:
 ${companyContext || 'Independent market research'}
-
-CRITICAL - IVR/AUTOMATED SYSTEM DETECTION:
-If you hear ANY of the following, immediately use the endCall function to hang up:
-- "Press 1", "Press 2", "Dial", "Enter your", "Press star", "Press pound"
-- "Your call is important to us", "Please hold", "All representatives are busy"
-- "For sales press", "For support press", "For billing press", "For English press"
-- Repetitive menu options or clearly robotic/synthesized voices
-- Music on hold for more than 3 seconds without human speech
-- "Leave a message after the beep", "Please leave your message"
-- "The person you are trying to reach", "is not available"
-- "This call may be recorded", followed by menu options
-Do NOT attempt to interact with automated systems - just hang up immediately.
-
+${AMD_SYSTEM_PROMPT_INSTRUCTIONS}
 CALL SCRIPT:
 1. OPENING (Keep brief - 15 seconds max):
    - Greet warmly and introduce yourself
@@ -660,40 +621,14 @@ NEGOTIATION APPROACH:
 - Never be pushy - genuine feedback is more valuable than forced positivity`
             }
         ],
-        tools: [
-            {
-                type: "function",
-                function: {
-                    name: "endCall",
-                    description: "End the call immediately. Use this when you detect an IVR system, automated menu, voicemail, or any non-human answering the call.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            reason: {
-                                type: "string",
-                                enum: ["ivr_detected", "voicemail_detected", "no_answer", "customer_declined", "call_completed"],
-                                description: "The reason for ending the call"
-                            }
-                        },
-                        required: ["reason"]
-                    }
-                }
-            }
-        ]
+        tools: [END_CALL_TOOL]
     },
     voice: {
         provider: "11labs",
         voiceId: "21m00Tcm4TlvDq8ikWAM", // Rachel - professional female voice
     },
-    voicemailDetection: {
-        provider: "twilio",
-        enabled: true,
-        voicemailDetectionTypes: ["machine_end_beep", "machine_end_silence", "machine_end_other"],
-        machineDetectionTimeout: 30,
-        machineDetectionSpeechThreshold: 2400,
-        machineDetectionSpeechEndThreshold: 1200,
-        machineDetectionSilenceTimeout: 5000
-    },
+    // Use optimized AMD configuration from the amd module
+    voicemailDetection: getAMDConfig(amdPreset),
     firstMessage: "Hi there! I'm calling on behalf of a quick market research study. Do you have about 2 minutes to share your thoughts on a new product idea? Your feedback would be really helpful!",
     endCallMessage: "Thank you so much for your time today! Your feedback is incredibly valuable. Have a great day!",
 });
@@ -711,7 +646,8 @@ router.post('/call', async (req, res) => {
             productIdea,
             companyContext,
             assistant: customAssistant,
-            assistantId // ID of pre-configured assistant from Vapi
+            assistantId, // ID of pre-configured assistant from Vapi
+            amdPreset = DEFAULT_AMD_PRESET // AMD preset: 'aggressive', 'balanced', 'conservative', 'disabled'
         } = req.body;
 
         if (!phoneNumber) {
@@ -769,7 +705,7 @@ router.post('/call', async (req, res) => {
 
             // If product idea is also provided, override the assistant's messages
             if (productIdea) {
-                const researchAssistant = createMarketResearchAssistant(productIdea, companyContext);
+                const researchAssistant = createMarketResearchAssistant(productIdea, companyContext, amdPreset);
                 callPayload.assistantOverrides = {
                     // Override the model with IVR detection prompt and tools
                     model: {
@@ -779,22 +715,24 @@ router.post('/call', async (req, res) => {
                         tools: researchAssistant.model.tools, // Include endCall tool for IVR detection
                     },
                     firstMessage: researchAssistant.firstMessage,
-                    voicemailDetection: researchAssistant.voicemailDetection, // Include AMD
+                    voicemailDetection: researchAssistant.voicemailDetection, // Include optimized AMD
                 };
             } else {
                 // Even without product idea, add voicemail detection to the pre-configured assistant
-                const researchAssistant = createMarketResearchAssistant('', '');
+                const amdConfig = getAMDConfig(amdPreset);
                 callPayload.assistantOverrides = {
-                    voicemailDetection: researchAssistant.voicemailDetection,
+                    voicemailDetection: amdConfig,
                     model: {
-                        tools: researchAssistant.model.tools,
+                        tools: [END_CALL_TOOL],
                     },
                 };
             }
         } else {
             // Otherwise, use the custom assistant or create a dynamic one
-            callPayload.assistant = customAssistant || createMarketResearchAssistant(productIdea, companyContext);
+            callPayload.assistant = customAssistant || createMarketResearchAssistant(productIdea, companyContext, amdPreset);
         }
+
+        console.log(`📞 [AMD] Using preset: ${amdPreset}, config:`, JSON.stringify(getAMDConfig(amdPreset), null, 2));
 
         // Log the payload for debugging
         console.log('📞 Vapi Call Payload:', JSON.stringify(callPayload, null, 2));
@@ -836,7 +774,7 @@ router.post('/calls/batch', async (req, res) => {
             return res.status(400).json({ error: 'Vapi API key not configured' });
         }
 
-        const { phoneNumbers, productIdea, companyContext, delayMs = 2000 } = req.body;
+        const { phoneNumbers, productIdea, companyContext, delayMs = 2000, amdPreset = DEFAULT_AMD_PRESET } = req.body;
 
         if (!phoneNumbers || !Array.isArray(phoneNumbers)) {
             return res.status(400).json({ error: 'phoneNumbers array is required' });
@@ -858,7 +796,8 @@ router.post('/calls/batch', async (req, res) => {
             ? `Warning: Only ${remainingCapacity} of ${phoneNumbers.length} calls can be made today`
             : null;
 
-        const assistant = createMarketResearchAssistant(productIdea, companyContext);
+        console.log(`📞 [Batch] Using AMD preset: ${amdPreset}`);
+        const assistant = createMarketResearchAssistant(productIdea, companyContext, amdPreset);
         const results = [];
         let skippedDueToCapacity = 0;
 
@@ -1320,7 +1259,8 @@ router.post('/user/:userId/call', async (req, res) => {
             productIdea,
             companyContext,
             assistant: customAssistant,
-            assistantId
+            assistantId,
+            amdPreset = DEFAULT_AMD_PRESET // AMD preset: 'aggressive', 'balanced', 'conservative', 'disabled'
         } = req.body;
 
         if (!phoneNumber) {
@@ -1419,23 +1359,36 @@ router.post('/user/:userId/call', async (req, res) => {
             },
         };
 
-        // Configure assistant
+        // Configure assistant with optimized AMD
         if (assistantId) {
             callPayload.assistantId = assistantId;
             if (productIdea) {
-                const researchAssistant = createMarketResearchAssistant(productIdea, companyContext);
+                const researchAssistant = createMarketResearchAssistant(productIdea, companyContext, amdPreset);
                 callPayload.assistantOverrides = {
                     model: {
                         provider: researchAssistant.model.provider,
                         model: researchAssistant.model.model,
                         messages: researchAssistant.model.messages,
+                        tools: researchAssistant.model.tools, // Include endCall tool for AMD
                     },
                     firstMessage: researchAssistant.firstMessage,
+                    voicemailDetection: researchAssistant.voicemailDetection, // Include optimized AMD
+                };
+            } else {
+                // Even without product idea, add voicemail detection
+                const amdConfig = getAMDConfig(amdPreset);
+                callPayload.assistantOverrides = {
+                    voicemailDetection: amdConfig,
+                    model: {
+                        tools: [END_CALL_TOOL],
+                    },
                 };
             }
         } else {
-            callPayload.assistant = customAssistant || createMarketResearchAssistant(productIdea, companyContext);
+            callPayload.assistant = customAssistant || createMarketResearchAssistant(productIdea, companyContext, amdPreset);
         }
+
+        console.log(`📞 [User: ${userId}] [AMD] Using preset: ${amdPreset}`);
 
         // Enforce max duration for free tier users
         if (callLimit.isFreeTier && callLimit.maxDuration) {
@@ -1519,7 +1472,7 @@ router.post('/user/:userId/calls/batch', async (req, res) => {
         }
 
         const { userId } = req.params;
-        const { phoneNumbers, productIdea, companyContext, delayMs = 2000 } = req.body;
+        const { phoneNumbers, productIdea, companyContext, delayMs = 2000, amdPreset = DEFAULT_AMD_PRESET } = req.body;
 
         if (!phoneNumbers || !Array.isArray(phoneNumbers)) {
             return res.status(400).json({ error: 'phoneNumbers array is required' });
@@ -1549,7 +1502,8 @@ router.post('/user/:userId/calls/batch', async (req, res) => {
             ? `Warning: Only ${stats.remainingToday} of ${phoneNumbers.length} calls can be made today`
             : null;
 
-        const assistant = createMarketResearchAssistant(productIdea, companyContext);
+        console.log(`📞 [User: ${userId}] [Batch] Using AMD preset: ${amdPreset}`);
+        const assistant = createMarketResearchAssistant(productIdea, companyContext, amdPreset);
         const results = [];
         let skippedDueToCapacity = 0;
 
