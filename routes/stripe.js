@@ -14,6 +14,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { provisionPhoneNumbersForUser, releasePhoneNumbersForUser } from '../services/phoneProvisioning.js';
+import { sendPaymentConfirmationEmail } from '../services/email.js';
 
 const router = Router();
 
@@ -142,7 +143,22 @@ async function handleCheckoutCompleted(session) {
 
     console.log(`  ✓ Profile plan updated to: ${planId}`);
 
-    // 3. Provision phone numbers
+    // 3. Send payment confirmation email
+    try {
+        await sendPaymentConfirmationEmail({
+            email: customerEmail,
+            name: session.customer_details?.name,
+            planName: planId.charAt(0).toUpperCase() + planId.slice(1),
+            amount: session.amount_total,
+            currency: session.currency?.toUpperCase() || 'USD',
+        });
+        console.log('  ✓ Payment confirmation email sent');
+    } catch (emailError) {
+        console.error('  ⚠️ Failed to send payment email:', emailError.message);
+        // Don't throw - payment succeeded, email failure shouldn't break the flow
+    }
+
+    // 4. Provision phone numbers
     console.log(`  📞 Provisioning ${planConfig.phoneNumbers} phone numbers...`);
 
     try {

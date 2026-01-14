@@ -223,6 +223,7 @@ router.post('/leads', async (req, res) => {
             const data = {
                 name: lead.name,
                 phone: lead.phone,
+                email: lead.email,
                 address: lead.address,
                 city: lead.city,
                 website: lead.website,
@@ -270,7 +271,9 @@ router.post('/leads', async (req, res) => {
                             console.error('Error saving lead batch:', error);
                         }
                     } else {
-                        saved += data?.length || batch.length;
+                        const actualSaved = data?.length ?? 0;
+                        saved += actualSaved;
+                        duplicates += batch.length - actualSaved;
                     }
                 } catch (err) {
                     console.error('Error processing lead batch after retries:', err);
@@ -369,6 +372,49 @@ router.patch('/leads/industries', async (req, res) => {
 });
 
 // Update lead status
+// Update a lead (general update)
+router.patch('/leads/:id', async (req, res) => {
+    try {
+        const supabase = getSupabaseClient(req);
+        if (!supabase) {
+            return res.status(400).json({ error: 'Supabase not configured' });
+        }
+
+        const { name, phone, email, category, address, website, status, city } = req.body;
+
+        // Build update object with only provided fields
+        const updates = {};
+        if (name !== undefined) updates.name = name;
+        if (phone !== undefined) updates.phone = phone;
+        if (email !== undefined) updates.email = email;
+        if (category !== undefined) updates.category = category;
+        if (address !== undefined) updates.address = address;
+        if (website !== undefined) updates.website = website;
+        if (status !== undefined) updates.status = status;
+        if (city !== undefined) updates.city = city;
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        const { data, error } = await supabase
+            .from('leads')
+            .update(updates)
+            .eq('id', req.params.id)
+            .select()
+            .single();
+
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json(data);
+    } catch (error) {
+        console.error('Update lead error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.patch('/leads/:id/status', async (req, res) => {
     try {
         const supabase = getSupabaseClient(req);

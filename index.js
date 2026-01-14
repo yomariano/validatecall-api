@@ -9,6 +9,7 @@ import stripeRoutes from './routes/stripe.js';
 import scheduledRoutes from './routes/scheduled.js';
 import claudeRoutes from './routes/claude.js';
 import usageRoutes from './routes/usage.js';
+import emailRoutes from './routes/email.js';
 
 // Import services
 import callScheduler from './services/callScheduler.js';
@@ -59,6 +60,7 @@ app.get('/health', (req, res) => {
             stripe: !!process.env.STRIPE_SECRET_KEY,
             twilio: !!process.env.TWILIO_ACCOUNT_SID,
             claude: !!process.env.CLAUDE_API_URL,
+            resend: !!process.env.RESEND_API_KEY,
             scheduler: true,
         }
     });
@@ -72,6 +74,7 @@ app.use('/api/billing', stripeRoutes);  // Alias for billing endpoints
 app.use('/api/scheduled', scheduledRoutes);
 app.use('/api/claude', claudeRoutes);
 app.use('/api/usage', usageRoutes);
+app.use('/api/email', emailRoutes);
 
 // 404 handler
 app.use((req, res) => {

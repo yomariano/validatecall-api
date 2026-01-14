@@ -10,6 +10,7 @@
 
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
+import { sendUsageAlertEmail } from '../services/email.js';
 
 const router = Router();
 
@@ -26,6 +27,68 @@ function ensureSupabaseConfigured({ res }) {
     console.error('💥 Supabase not configured: missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY');
     res.status(500).json({ error: 'Supabase not configured' });
     return false;
+}
+
+/**
+ * Check if user is at 80% usage and send alert email (only once)
+ */
+async function checkAndSendUsageAlert(userId, resourceType, used, limit) {
+    const percentUsed = Math.round((used / limit) * 100);
+
+    // Only send alert at 80% threshold
+    if (percentUsed < 80) return;
+
+    // Check if alert was already sent
+    const alertType = `usage_alert_${resourceType}_80`;
+    const { data: existingAlert } = await supabase
+        .from('email_logs')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('email_type', alertType)
+        .maybeSingle();
+
+    if (existingAlert) {
+        console.log(`  ℹ️ Usage alert already sent for ${resourceType}`);
+        return;
+    }
+
+    // Get user profile for email
+    const { data: profile } = await supabase
+        .from('profiles')
+        .select('email, full_name')
+        .eq('id', userId)
+        .single();
+
+    if (!profile?.email) {
+        console.warn(`  ⚠️ No email found for user ${userId}`);
+        return;
+    }
+
+    try {
+        const result = await sendUsageAlertEmail({
+            email: profile.email,
+            name: profile.full_name,
+            resourceType,
+            used,
+            limit,
+            percentUsed,
+        });
+
+        if (result.success) {
+            // Log the alert to prevent duplicates
+            await supabase.from('email_logs').insert({
+                user_id: userId,
+                email_type: alertType,
+                recipient: profile.email,
+                resend_id: result.emailId,
+                status: 'sent',
+            }).catch(err => console.warn('Failed to log email:', err.message));
+
+            console.log(`  ✓ Usage alert sent for ${resourceType} (${percentUsed}%)`);
+        }
+    } catch (emailError) {
+        console.error(`  ⚠️ Failed to send usage alert:`, emailError.message);
+    }
 }
 
 /**
@@ -414,6 +477,10 @@ router.post('/:userId/increment-leads', async (req, res) => {
 
         if (updateError) throw updateError;
 
+        // Check for usage alert (async, don't await)
+        checkAndSendUsageAlert(userId, 'leads', newCount, currentUsage.leads_limit)
+            .catch(err => console.error('Usage alert error:', err.message));
+
         res.json({
             success: true,
             isFreeTier: true,
@@ -518,6 +585,10 @@ router.post('/:userId/increment-calls', async (req, res) => {
             .eq('user_id', userId);
 
         if (updateError) throw updateError;
+
+        // Check for usage alert (async, don't await)
+        checkAndSendUsageAlert(userId, 'calls', newCount, currentUsage.calls_limit)
+            .catch(err => console.error('Usage alert error:', err.message));
 
         res.json({
             success: true,

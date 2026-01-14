@@ -3,6 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
 
+// Allow self-signed certificates in development
+if (process.env.NODE_ENV !== 'production') {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    console.log('[Claude] Development mode - allowing self-signed certificates');
+}
+
 // Initialize Supabase for free tier checks
 const supabase = createClient(
     process.env.SUPABASE_URL,
@@ -196,7 +202,7 @@ const promptClaude = async (prompt, model = 'haiku') => {
         throw new Error('Claude API not configured');
     }
 
-    const url = `${claudeApiUrl}/prompt`;
+    const url = `${claudeApiUrl}/v1/claude`;
     const body = { prompt, model };
 
     console.log(`Calling Claude API at: ${url}`);
@@ -403,24 +409,36 @@ router.post('/generate-leads', async (req, res) => {
             return res.status(400).json({ error: 'keyword and location are required' });
         }
 
-        // Atomically reserve leads (prevents race conditions)
-        const reservation = await reserveFreeTierLeads(userId, maxResults);
+        // Skip free tier limits in development mode
+        const isDevelopment = process.env.NODE_ENV !== 'production';
 
-        if (!reservation.canGenerate) {
-            return res.status(403).json({
-                error: reservation.error || 'Free tier lead limit reached',
-                upgradeRequired: true,
-                isFreeTier: true,
-                used: reservation.used,
-                limit: reservation.limit,
-                remaining: reservation.remaining
-            });
+        let reservation = { canGenerate: true, isFreeTier: false, reserved: maxResults };
+
+        if (!isDevelopment) {
+            // Atomically reserve leads (prevents race conditions) - only in production
+            reservation = await reserveFreeTierLeads(userId, maxResults);
+
+            if (!reservation.canGenerate) {
+                return res.status(403).json({
+                    error: reservation.error || 'Free tier lead limit reached',
+                    upgradeRequired: true,
+                    isFreeTier: true,
+                    used: reservation.used,
+                    limit: reservation.limit,
+                    remaining: reservation.remaining
+                });
+            }
+        } else {
+            console.log('[LeadGen] Development mode - skipping free tier limits');
         }
 
         // Use the reserved count (already capped to remaining for free tier)
         const effectiveMaxResults = reservation.isFreeTier
             ? reservation.reserved
             : maxResults;
+
+        // Generate unique prefix for place_ids to avoid duplicates
+        const uniquePrefix = `${keyword.replace(/\s+/g, '_')}_${location.replace(/\s+/g, '_')}_${Date.now()}`;
 
         const prompt = `Generate ${effectiveMaxResults} SYNTHETIC TEST DATA entries for a lead generation application demo/testing.
 
@@ -430,13 +448,14 @@ Create fictional "${keyword}" business entries for "${location}" with this EXACT
   {
     "name": "Fictional Business Name",
     "phone": "+353-555-0001",
+    "email": "contact@fictional-business.com",
     "address": "123 Test Street",
     "city": "${location}",
     "website": "https://example.com",
     "rating": 4.5,
     "reviewCount": 125,
     "category": "${keyword}",
-    "placeId": "test_place_id_1"
+    "placeId": "${uniquePrefix}_001"
   }
 ]
 
@@ -444,7 +463,9 @@ Requirements:
 - Generate exactly ${effectiveMaxResults} entries
 - Use realistic-looking but clearly FICTIONAL names (e.g., "Test Dental Clinic", "Sample Dentistry")
 - Phone numbers should use +353 for Ireland with format +353-555-XXXX (555 indicates test numbers)
+- Email addresses should be realistic business emails (e.g., info@businessname.com, contact@businessname.ie)
 - Ratings between 3.5-5.0, review counts 10-500
+- Each placeId MUST be unique and start with "${uniquePrefix}_" followed by a unique number (001, 002, etc.)
 - Return ONLY the JSON array, nothing else
 
 This is synthetic data for application testing, not real business information.`;
@@ -455,7 +476,7 @@ This is synthetic data for application testing, not real business information.`;
         const timeout = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
 
         try {
-            const response = await fetch(`${claudeApiUrl}/prompt`, {
+            const response = await fetch(`${claudeApiUrl}/v1/claude`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
