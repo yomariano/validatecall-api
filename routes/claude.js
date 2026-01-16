@@ -203,7 +203,7 @@ const promptClaude = async (prompt, model = 'sonnet', provider = 'claude') => {
         throw new Error('Claude API not configured');
     }
 
-    const url = `${claudeApiUrl}/prompt`;
+    const url = `${claudeApiUrl}/v1/claude`;
     const body = { prompt, model, provider };
 
     console.log(`Calling Claude API at: ${url}`);
@@ -477,7 +477,7 @@ This is synthetic data for application testing, not real business information.`;
         const timeout = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
 
         try {
-            const response = await fetch(`${claudeApiUrl}/prompt`, {
+            const response = await fetch(`${claudeApiUrl}/v1/claude`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
