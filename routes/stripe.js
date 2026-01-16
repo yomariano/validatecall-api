@@ -18,8 +18,19 @@ import { sendPaymentConfirmationEmail } from '../services/email.js';
 
 const router = Router();
 
+// Use test key if available and not in production, otherwise use live key
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const STRIPE_TEST_SECRET_KEY = process.env.STRIPE_TEST_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+
+// Helper to get the right Stripe key based on livemode
+function getStripeKey(livemode) {
+    if (livemode) {
+        return STRIPE_SECRET_KEY;
+    }
+    // For test mode, prefer test key if available
+    return STRIPE_TEST_SECRET_KEY || STRIPE_SECRET_KEY;
+}
 
 // Initialize Supabase with service role for admin operations
 const supabase = createClient(
@@ -97,9 +108,11 @@ async function handleCheckoutCompleted(session) {
     // If no plan_id in metadata, fetch the subscription to get the price
     if (!planId && session.subscription) {
         try {
-            // Fetch subscription details from Stripe
+            // Fetch subscription details from Stripe (use correct key based on livemode)
             const Stripe = (await import('stripe')).default;
-            const stripe = new Stripe(STRIPE_SECRET_KEY);
+            const stripeKey = getStripeKey(session.livemode);
+            const stripe = new Stripe(stripeKey);
+            console.log(`  Using ${session.livemode ? 'LIVE' : 'TEST'} Stripe key`);
             const subscription = await stripe.subscriptions.retrieve(session.subscription, {
                 expand: ['items.data.price']
             });
