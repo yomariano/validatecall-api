@@ -127,15 +127,49 @@ router.get('/:userId', async (req, res) => {
             return res.status(500).json({ error: 'Failed to get usage' });
         }
 
-        // If user has active subscription, return unlimited
+        // If user has active subscription, return usage with plan limits
         if (subscription) {
+            // Plan limits configuration
+            const PLAN_LIMITS = {
+                lite: { leadsLimit: 500, callsLimit: 100 },
+                starter: { leadsLimit: 2000, callsLimit: 500 },
+                pro: { leadsLimit: 10000, callsLimit: 2000 },
+                // Legacy
+                basic: { leadsLimit: 500, callsLimit: 100 },
+                enterprise: { leadsLimit: 50000, callsLimit: 5000 },
+            };
+
+            const planLimits = PLAN_LIMITS[subscription.plan_id] || PLAN_LIMITS.lite;
+
+            // Get actual usage counts from database
+            const { count: leadsCount } = await supabase
+                .from('leads')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId);
+
+            const { count: callsCount } = await supabase
+                .from('calls')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId);
+
+            const leadsUsed = leadsCount || 0;
+            const callsUsed = callsCount || 0;
+
             return res.json({
                 isFreeTier: false,
                 subscription: {
                     planId: subscription.plan_id,
                     status: subscription.status
                 },
-                usage: null // No limits for subscribed users
+                usage: {
+                    leadsUsed,
+                    leadsLimit: planLimits.leadsLimit,
+                    leadsRemaining: Math.max(0, planLimits.leadsLimit - leadsUsed),
+                    callsUsed,
+                    callsLimit: planLimits.callsLimit,
+                    callsRemaining: Math.max(0, planLimits.callsLimit - callsUsed),
+                    callSecondsPerCall: null // No duration limit for paid users
+                }
             });
         }
 
