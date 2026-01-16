@@ -374,8 +374,18 @@ router.post('/webhook', async (req, res) => {
 
     try {
         // Parse the event from raw body
+        // When using express.raw(), req.body is a Buffer
         const rawBody = req.body;
-        const rawBodyString = typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody);
+        let rawBodyString;
+
+        if (Buffer.isBuffer(rawBody)) {
+            rawBodyString = rawBody.toString('utf8');
+        } else if (typeof rawBody === 'string') {
+            rawBodyString = rawBody;
+        } else {
+            // Fallback: already parsed JSON (shouldn't happen with express.raw())
+            rawBodyString = JSON.stringify(rawBody);
+        }
 
         // Verify webhook signature in production
         if (STRIPE_WEBHOOK_SECRET) {
@@ -394,8 +404,8 @@ router.post('/webhook', async (req, res) => {
             console.warn('⚠️ STRIPE_WEBHOOK_SECRET not set - skipping signature verification (UNSAFE in production)');
         }
 
-        // Parse the event
-        event = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+        // Parse the event from the raw body string
+        event = JSON.parse(rawBodyString);
 
         console.log(`  Event type: ${event.type}`);
 
