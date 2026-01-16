@@ -332,14 +332,27 @@ router.post('/webhook', async (req, res) => {
     try {
         // Parse the event from raw body
         const rawBody = req.body;
+        const rawBodyString = typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody);
 
-        // In production, verify signature
-        if (STRIPE_WEBHOOK_SECRET && signature) {
-            // For now, trust the event (implement proper verification in production)
-            event = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+        // Verify webhook signature in production
+        if (STRIPE_WEBHOOK_SECRET) {
+            if (!signature) {
+                console.error('❌ Missing stripe-signature header');
+                return res.status(401).json({ error: 'Missing signature' });
+            }
+
+            const isValid = verifyStripeSignature(rawBodyString, signature);
+            if (!isValid) {
+                console.error('❌ Invalid webhook signature');
+                return res.status(401).json({ error: 'Invalid signature' });
+            }
+            console.log('  ✓ Webhook signature verified');
         } else {
-            event = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+            console.warn('⚠️ STRIPE_WEBHOOK_SECRET not set - skipping signature verification (UNSAFE in production)');
         }
+
+        // Parse the event
+        event = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
 
         console.log(`  Event type: ${event.type}`);
 
