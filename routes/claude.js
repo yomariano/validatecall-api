@@ -197,13 +197,14 @@ const claudeApiKey = cleanEnvVar(process.env.CLAUDE_API_KEY);
 console.log('Claude API URL configured:', claudeApiUrl ? `${claudeApiUrl.substring(0, 20)}...` : 'NOT SET');
 
 // Helper to call Claude API
-const promptClaude = async (prompt, model = 'haiku') => {
+// Updated to use new /prompt endpoint with provider parameter
+const promptClaude = async (prompt, model = 'haiku', provider = 'claude') => {
     if (!claudeApiUrl || !claudeApiKey) {
         throw new Error('Claude API not configured');
     }
 
-    const url = `${claudeApiUrl}/v1/claude`;
-    const body = { prompt, model };
+    const url = `${claudeApiUrl}/prompt`;
+    const body = { prompt, model, provider };
 
     console.log(`Calling Claude API at: ${url}`);
     console.log(`Request body:`, JSON.stringify(body).substring(0, 200) + '...');
@@ -476,13 +477,13 @@ This is synthetic data for application testing, not real business information.`;
         const timeout = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
 
         try {
-            const response = await fetch(`${claudeApiUrl}/v1/claude`, {
+            const response = await fetch(`${claudeApiUrl}/prompt`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-API-Key': claudeApiKey,
                 },
-                body: JSON.stringify({ prompt, model: 'sonnet' }),
+                body: JSON.stringify({ prompt, model: 'sonnet', provider: 'claude' }),
                 signal: controller.signal,
             });
 
