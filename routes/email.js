@@ -261,11 +261,11 @@ Return your response in this EXACT JSON format (no markdown, no explanation):
 /**
  * POST /api/email/send-cold-email
  * Send a cold email to a lead
- * Body: { leadId, toEmail, toName, subject, body, senderName, senderCompany }
+ * Body: { leadId, toEmail, toName, subject, body, senderName, senderEmail, senderCompany }
  */
 router.post('/send-cold-email', async (req, res) => {
     try {
-        const { leadId, toEmail, toName, subject, body, senderName, senderCompany, userId } = req.body;
+        const { leadId, toEmail, toName, subject, body, senderName, senderEmail, senderCompany, userId } = req.body;
 
         if (!toEmail || !subject || !body) {
             return res.status(400).json({ error: 'toEmail, subject, and body are required' });
@@ -287,6 +287,7 @@ router.post('/send-cold-email', async (req, res) => {
             htmlContent,
             textContent: body + `\n\nBest regards,\n${senderName || 'The Team'}${senderCompany ? `\n${senderCompany}` : ''}`,
             fromName: senderName,
+            fromEmail: senderEmail,
         });
 
         if (result.success) {

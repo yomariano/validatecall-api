@@ -10,6 +10,7 @@ import scheduledRoutes from './routes/scheduled.js';
 import claudeRoutes from './routes/claude.js';
 import usageRoutes from './routes/usage.js';
 import emailRoutes from './routes/email.js';
+import domainsRoutes from './routes/domains.js';
 
 // Import services
 import callScheduler from './services/callScheduler.js';
@@ -75,6 +76,7 @@ app.use('/api/scheduled', scheduledRoutes);
 app.use('/api/claude', claudeRoutes);
 app.use('/api/usage', usageRoutes);
 app.use('/api/email', emailRoutes);
+app.use('/api/domains', domainsRoutes);
 
 // 404 handler
 app.use((req, res) => {

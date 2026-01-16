@@ -337,22 +337,35 @@ Questions? Contact support@validatecall.com
 
 /**
  * Send cold email to a lead
+ * @param {string} fromEmail - Custom sender email (requires verified domain in Resend)
  */
-export async function sendColdEmail({ toEmail, toName, subject, htmlContent, textContent, fromName }) {
+export async function sendColdEmail({ toEmail, toName, subject, htmlContent, textContent, fromName, fromEmail }) {
     if (!resend) {
         console.warn('RESEND_API_KEY not set - skipping cold email');
         return { success: false, error: 'Email service not configured' };
     }
 
     try {
-        const fromAddress = fromName
-            ? `${fromName} <${process.env.EMAIL_FROM_ADDRESS?.match(/<(.+)>/)?.[1] || 'noreply@validatecall.com'}>`
-            : FROM_ADDRESS;
+        // Build the from address
+        // If custom fromEmail is provided (and domain is verified in Resend), use it
+        // Otherwise fall back to default
+        let fromAddress;
+        if (fromEmail) {
+            // Custom sender email provided - use it with optional display name
+            fromAddress = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
+        } else if (fromName) {
+            // Only display name provided - use default email
+            const defaultEmail = process.env.EMAIL_FROM_ADDRESS?.match(/<(.+)>/)?.[1] || 'noreply@validatecall.com';
+            fromAddress = `${fromName} <${defaultEmail}>`;
+        } else {
+            // Use full default FROM_ADDRESS
+            fromAddress = FROM_ADDRESS;
+        }
 
         const { data, error } = await resend.emails.send({
             from: fromAddress,
             to: toEmail,
-            replyTo: REPLY_TO,
+            replyTo: fromEmail || REPLY_TO, // Reply to custom email if provided
             subject: subject,
             html: htmlContent,
             text: textContent,
@@ -360,10 +373,17 @@ export async function sendColdEmail({ toEmail, toName, subject, htmlContent, tex
 
         if (error) {
             console.error('Failed to send cold email:', error);
+            // Check if it's a domain verification error
+            if (error.message?.includes('domain') || error.message?.includes('verified')) {
+                return {
+                    success: false,
+                    error: `Domain not verified: ${fromEmail}. Please verify your domain in Resend dashboard first.`
+                };
+            }
             return { success: false, error: error.message };
         }
 
-        console.log(`Cold email sent to ${toEmail}, id: ${data.id}`);
+        console.log(`Cold email sent to ${toEmail} from ${fromAddress}, id: ${data.id}`);
         return { success: true, emailId: data.id };
     } catch (err) {
         console.error('Cold email exception:', err);
