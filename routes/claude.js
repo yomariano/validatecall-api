@@ -523,7 +523,12 @@ This is synthetic data for application testing, not real business information.`;
         }
     } catch (error) {
         console.error('Lead generation error:', error);
-        res.status(500).json({ error: error.message });
+        console.error('Claude API URL:', claudeApiUrl ? 'configured' : 'NOT SET');
+        console.error('Claude API Key:', claudeApiKey ? 'configured' : 'NOT SET');
+        res.status(500).json({
+            error: error.message,
+            claudeConfigured: !!(claudeApiUrl && claudeApiKey)
+        });
     }
 });
 
