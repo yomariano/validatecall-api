@@ -300,22 +300,42 @@ class CallScheduler {
      * Increment phone usage counter
      */
     async incrementPhoneUsage(phoneNumberId, userId, callId = null) {
-        const { error } = await supabase.rpc('increment_phone_usage', {
+        const { error: rpcError } = await supabase.rpc('increment_phone_usage', {
             p_phone_number_id: phoneNumberId,
             p_user_id: userId,
             p_call_id: callId
         });
 
-        // Fallback if RPC doesn't exist
-        if (error) {
-            await supabase
+        // Fallback if RPC doesn't exist - use read-then-update
+        if (rpcError) {
+            console.log('  [Scheduler] RPC not available, using fallback increment');
+
+            // Get current values
+            const { data: current, error: readError } = await supabase
+                .from('user_phone_numbers')
+                .select('daily_calls_used, total_calls_made')
+                .eq('phone_number_id', phoneNumberId)
+                .eq('user_id', userId)
+                .single();
+
+            if (readError || !current) {
+                console.error('[Scheduler] Failed to read phone number for increment:', readError);
+                return;
+            }
+
+            // Update with incremented values
+            const { error: updateError } = await supabase
                 .from('user_phone_numbers')
                 .update({
-                    daily_calls_used: supabase.raw('daily_calls_used + 1'),
-                    total_calls_made: supabase.raw('total_calls_made + 1'),
+                    daily_calls_used: (current.daily_calls_used || 0) + 1,
+                    total_calls_made: (current.total_calls_made || 0) + 1,
                 })
                 .eq('phone_number_id', phoneNumberId)
                 .eq('user_id', userId);
+
+            if (updateError) {
+                console.error('[Scheduler] Failed to increment phone usage:', updateError);
+            }
         }
     }
 

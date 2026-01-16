@@ -67,6 +67,59 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// Check if in development mode
+const IS_DEV = process.env.NODE_ENV !== 'production';
+const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Validate that the authenticated user matches the userId in the URL
+ * Returns the authenticated userId or throws an error
+ */
+async function validateUserAccess(req, paramUserId) {
+    // In dev mode without token, allow mock user access
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
+    if (!token && IS_DEV) {
+        // Dev mode: allow access if paramUserId matches mock user or is the same
+        if (paramUserId === MOCK_USER_ID) {
+            return MOCK_USER_ID;
+        }
+        // In dev mode, allow any userId for testing
+        console.log(`[Dev Mode] Allowing access to userId: ${paramUserId}`);
+        return paramUserId;
+    }
+
+    if (!token) {
+        throw new Error('Authentication required');
+    }
+
+    // Verify token and get user
+    const { createClient: createAuthClient } = await import('@supabase/supabase-js');
+    const authSupabase = createAuthClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_ANON_KEY,
+        {
+            global: {
+                headers: { Authorization: `Bearer ${token}` }
+            }
+        }
+    );
+
+    const { data: { user }, error } = await authSupabase.auth.getUser();
+
+    if (error || !user) {
+        throw new Error('Invalid authentication token');
+    }
+
+    // Verify the authenticated user matches the requested userId
+    if (user.id !== paramUserId) {
+        throw new Error('Access denied: User ID mismatch');
+    }
+
+    return user.id;
+}
+
 // Shared demo phone for free tier users
 const FREE_TIER_PHONE_ID = process.env.VAPI_FREE_TIER_PHONE_ID;
 const FREE_TIER_MAX_DURATION = 120; // 2 minutes in seconds
@@ -205,6 +258,44 @@ async function reserveFreeTierCall(userId) {
     };
 }
 
+/**
+ * Rollback a reserved free tier call if the VAPI call fails
+ * This prevents users from losing their call quota when calls fail
+ */
+async function rollbackFreeTierCall(userId) {
+    if (!userId) return { success: true, message: 'No rollback needed' };
+
+    try {
+        // Get current usage
+        const { data: usage } = await supabase
+            .from('free_tier_usage')
+            .select('calls_used')
+            .eq('user_id', userId)
+            .single();
+
+        if (!usage || usage.calls_used <= 0) {
+            return { success: true, message: 'No calls to rollback' };
+        }
+
+        // Decrement the call count
+        const { error } = await supabase
+            .from('free_tier_usage')
+            .update({ calls_used: usage.calls_used - 1 })
+            .eq('user_id', userId);
+
+        if (error) {
+            console.error('[Rollback] Failed to rollback call:', error);
+            return { success: false, error: error.message };
+        }
+
+        console.log(`[Rollback] Successfully rolled back call for user ${userId}`);
+        return { success: true, message: 'Call rolled back' };
+    } catch (error) {
+        console.error('[Rollback] Error during rollback:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 // Legacy function for backward compatibility (used by some endpoints)
 async function checkFreeTierCallLimit(userId) {
     // For read-only checks, just return current state
@@ -260,23 +351,44 @@ async function getUserPhoneNumber(userId) {
  * Increment usage for a phone number
  */
 async function incrementPhoneUsage(phoneNumberId, userId, callId = null) {
-    // Update the phone number usage
-    const { error } = await supabase.rpc('increment_phone_usage', {
+    // Try RPC first (atomic increment)
+    const { error: rpcError } = await supabase.rpc('increment_phone_usage', {
         p_phone_number_id: phoneNumberId,
         p_user_id: userId,
         p_call_id: callId
     });
 
-    // Fallback if RPC doesn't exist
-    if (error) {
-        await supabase
+    // Fallback if RPC doesn't exist - use read-then-update
+    if (rpcError) {
+        console.log('  RPC not available, using fallback increment');
+
+        // Get current values
+        const { data: current, error: readError } = await supabase
+            .from('user_phone_numbers')
+            .select('daily_calls_used, total_calls_made')
+            .eq('phone_number_id', phoneNumberId)
+            .eq('user_id', userId)
+            .single();
+
+        if (readError || !current) {
+            console.error('Failed to read phone number for increment:', readError);
+            return false;
+        }
+
+        // Update with incremented values
+        const { error: updateError } = await supabase
             .from('user_phone_numbers')
             .update({
-                daily_calls_used: supabase.raw('daily_calls_used + 1'),
-                total_calls_made: supabase.raw('total_calls_made + 1'),
+                daily_calls_used: (current.daily_calls_used || 0) + 1,
+                total_calls_made: (current.total_calls_made || 0) + 1,
             })
             .eq('phone_number_id', phoneNumberId)
             .eq('user_id', userId);
+
+        if (updateError) {
+            console.error('Failed to increment phone usage:', updateError);
+            return false;
+        }
     }
 
     return true;
@@ -346,7 +458,39 @@ class PhoneNumberRotator {
         // Current index for round-robin
         this.currentIndex = 0;
 
+        // Clean up old date entries every hour to prevent memory leak
+        this.cleanupInterval = setInterval(() => this.cleanupOldEntries(), 60 * 60 * 1000);
+
         console.log(`📞 Phone Rotator initialized with ${this.phoneNumbers.length} number(s), max ${this.maxCallsPerDay} calls/day each`);
+    }
+
+    /**
+     * Clean up usage entries from previous days to prevent memory leak
+     */
+    cleanupOldEntries() {
+        const today = this.getTodayDate();
+        let cleaned = 0;
+
+        for (const phoneNumberId of Object.keys(this.usage)) {
+            if (this.usage[phoneNumberId].date !== today) {
+                delete this.usage[phoneNumberId];
+                cleaned++;
+            }
+        }
+
+        if (cleaned > 0) {
+            console.log(`📞 Phone Rotator: Cleaned up ${cleaned} old usage entries`);
+        }
+    }
+
+    /**
+     * Cleanup resources when shutting down
+     */
+    destroy() {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+        }
     }
 
     getTodayDate() {
@@ -1234,10 +1378,17 @@ router.post('/parse-phones', (req, res) => {
 router.get('/user/:userId/phone-stats', async (req, res) => {
     try {
         const { userId } = req.params;
+
+        // Validate user has access to this userId
+        await validateUserAccess(req, userId);
+
         const stats = await getUserPhoneStats(userId);
         res.json(stats);
     } catch (error) {
         console.error('Error getting user phone stats:', error);
+        if (error.message.includes('Access denied') || error.message.includes('Authentication')) {
+            return res.status(403).json({ error: error.message });
+        }
         res.status(500).json({ error: error.message });
     }
 });
@@ -1253,6 +1404,14 @@ router.post('/user/:userId/call', async (req, res) => {
         }
 
         const { userId } = req.params;
+
+        // Validate user has access to this userId
+        try {
+            await validateUserAccess(req, userId);
+        } catch (authError) {
+            return res.status(403).json({ error: authError.message });
+        }
+
         const {
             phoneNumber,
             customerName,
@@ -1267,27 +1426,34 @@ router.post('/user/:userId/call', async (req, res) => {
             return res.status(400).json({ error: 'phoneNumber is required' });
         }
 
-        // Check free tier call limits
-        const callLimit = await checkFreeTierCallLimit(userId);
-        if (!callLimit.canCall) {
+        // ATOMIC: Reserve a call for free tier users (prevents race conditions)
+        const callReservation = await reserveFreeTierCall(userId);
+        if (!callReservation.canCall) {
             return res.status(403).json({
-                error: 'Free tier call limit reached',
+                error: callReservation.error || 'Free tier call limit reached',
                 upgradeRequired: true,
                 isFreeTier: true,
-                used: callLimit.used,
-                limit: callLimit.limit,
-                remaining: callLimit.remaining
+                used: callReservation.used,
+                limit: callReservation.limit,
+                remaining: callReservation.remaining
             });
         }
 
         // Debug logging
         console.log(`📞 [User: ${userId}] Call request for: "${phoneNumber}"`);
         console.log(`   Is Irish: ${isIrishNumber(phoneNumber)}, VoIPcloud configured: ${!!VOIPCLOUD_TOKEN}`);
-        console.log(`   Free tier: ${callLimit.isFreeTier}, Max duration: ${callLimit.maxDuration || 'unlimited'}`);
+        console.log(`   Free tier: ${callReservation.isFreeTier}, Max duration: ${callReservation.maxDuration || 'unlimited'}`);
+        if (callReservation.reserved) {
+            console.log(`   Call reserved: ${callReservation.used}/${callReservation.limit}`);
+        }
 
         // Route Irish calls through VoIPcloud
         if (isIrishNumber(phoneNumber)) {
             if (!VOIPCLOUD_TOKEN) {
+                // Rollback the reservation since we can't make the call
+                if (callReservation.isFreeTier && callReservation.reserved) {
+                    await rollbackFreeTierCall(userId);
+                }
                 return res.status(400).json({
                     error: 'Irish calls require VoIPcloud configuration. Set VOIPCLOUD_API_TOKEN in .env',
                     isIrishNumber: true,
@@ -1318,6 +1484,11 @@ router.post('/user/:userId/call', async (req, res) => {
                 });
             } catch (voipError) {
                 console.error('VoIPcloud call failed:', voipError.message);
+                // Rollback the reservation on failure
+                if (callReservation.isFreeTier && callReservation.reserved) {
+                    await rollbackFreeTierCall(userId);
+                    console.log(`📞 [User: ${userId}] Call rolled back due to VoIPcloud failure`);
+                }
                 return res.status(500).json({ error: voipError.message });
             }
         }
@@ -1328,7 +1499,7 @@ router.post('/user/:userId/call', async (req, res) => {
 
         if (!userPhone) {
             // For free tier users, use shared demo phone
-            if (callLimit.isFreeTier && FREE_TIER_PHONE_ID) {
+            if (callReservation.isFreeTier && FREE_TIER_PHONE_ID) {
                 console.log(`📞 [User: ${userId}] Using shared free tier phone`);
                 userPhone = {
                     phone_number_id: FREE_TIER_PHONE_ID,
@@ -1336,6 +1507,10 @@ router.post('/user/:userId/call', async (req, res) => {
                 };
                 usingFreeTierPhone = true;
             } else {
+                // Rollback the reservation since we can't make the call
+                if (callReservation.isFreeTier && callReservation.reserved) {
+                    await rollbackFreeTierCall(userId);
+                }
                 const stats = await getUserPhoneStats(userId);
                 return res.status(429).json({
                     error: stats.totalNumbers === 0
@@ -1391,9 +1566,9 @@ router.post('/user/:userId/call', async (req, res) => {
         console.log(`📞 [User: ${userId}] [AMD] Using preset: ${amdPreset}`);
 
         // Enforce max duration for free tier users
-        if (callLimit.isFreeTier && callLimit.maxDuration) {
-            callPayload.maxDurationSeconds = callLimit.maxDuration;
-            console.log(`📞 [User: ${userId}] Free tier: max duration set to ${callLimit.maxDuration}s`);
+        if (callReservation.isFreeTier && callReservation.maxDuration) {
+            callPayload.maxDurationSeconds = callReservation.maxDuration;
+            console.log(`📞 [User: ${userId}] Free tier: max duration set to ${callReservation.maxDuration}s`);
         }
 
         console.log(`📞 [User: ${userId}] Calling ${phoneNumber} from ${userPhone.phone_number}`);
@@ -1409,6 +1584,11 @@ router.post('/user/:userId/call', async (req, res) => {
 
         if (!response.ok) {
             const error = await response.json();
+            // Rollback the reservation on VAPI failure
+            if (callReservation.isFreeTier && callReservation.reserved) {
+                await rollbackFreeTierCall(userId);
+                console.log(`📞 [User: ${userId}] Call rolled back due to VAPI error`);
+            }
             return res.status(response.status).json({
                 error: error.message || 'Failed to initiate call'
             });
@@ -1421,10 +1601,9 @@ router.post('/user/:userId/call', async (req, res) => {
             await incrementPhoneUsage(userPhone.phone_number_id, userId, data.id);
         }
 
-        // Note: Free tier call count was already reserved atomically before making the call
-        // This prevents race conditions from rapid clicks
-        if (callLimit.isFreeTier) {
-            console.log(`📞 [User: ${userId}] Free tier call reserved (usage: ${callLimit.used}/${callLimit.limit})`);
+        // Call successfully initiated - reservation is now consumed
+        if (callReservation.isFreeTier) {
+            console.log(`📞 [User: ${userId}] Free tier call successful (usage: ${callReservation.used}/${callReservation.limit})`);
         }
 
         // Store call in database
@@ -1449,15 +1628,25 @@ router.post('/user/:userId/call', async (req, res) => {
                 phoneNumberUsed: userPhone.phone_number,
                 remainingCapacity: stats.remainingToday,
             },
-            _freeTier: callLimit.isFreeTier ? {
+            _freeTier: callReservation.isFreeTier ? {
                 isFreeTier: true,
-                callsUsed: (callLimit.used || 0) + 1,
-                callsRemaining: Math.max(0, (callLimit.remaining || 5) - 1),
-                maxDuration: callLimit.maxDuration
+                callsUsed: (callReservation.used || 0) + 1,
+                callsRemaining: Math.max(0, (callReservation.remaining || 5) - 1),
+                maxDuration: callReservation.maxDuration
             } : null
         });
     } catch (error) {
         console.error('Vapi user call error:', error);
+        // Attempt to rollback on unexpected errors (userId might not be defined if error is early)
+        try {
+            const { userId } = req.params;
+            if (userId) {
+                await rollbackFreeTierCall(userId);
+                console.log(`📞 [User: ${userId}] Call rolled back due to unexpected error`);
+            }
+        } catch (rollbackError) {
+            console.error('Rollback failed:', rollbackError.message);
+        }
         res.status(500).json({ error: error.message });
     }
 });
@@ -1472,6 +1661,14 @@ router.post('/user/:userId/calls/batch', async (req, res) => {
         }
 
         const { userId } = req.params;
+
+        // Validate user has access to this userId
+        try {
+            await validateUserAccess(req, userId);
+        } catch (authError) {
+            return res.status(403).json({ error: authError.message });
+        }
+
         const { phoneNumbers, productIdea, companyContext, delayMs = 2000, amdPreset = DEFAULT_AMD_PRESET } = req.body;
 
         if (!phoneNumbers || !Array.isArray(phoneNumbers)) {
@@ -1612,6 +1809,13 @@ router.post('/user/:userId/calls/batch', async (req, res) => {
 router.get('/user/:userId/phone-numbers', async (req, res) => {
     try {
         const { userId } = req.params;
+
+        // Validate user has access to this userId
+        try {
+            await validateUserAccess(req, userId);
+        } catch (authError) {
+            return res.status(403).json({ error: authError.message });
+        }
 
         const { data: numbers, error } = await supabase
             .from('user_phone_numbers')
