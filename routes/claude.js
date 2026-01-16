@@ -198,7 +198,7 @@ console.log('Claude API URL configured:', claudeApiUrl ? `${claudeApiUrl.substri
 
 // Helper to call Claude API
 // Updated to use new /prompt endpoint with provider parameter
-const promptClaude = async (prompt, model = 'haiku', provider = 'claude') => {
+const promptClaude = async (prompt, model = 'sonnet', provider = 'claude') => {
     if (!claudeApiUrl || !claudeApiKey) {
         throw new Error('Claude API not configured');
     }
@@ -292,7 +292,7 @@ Generate only the improved company context text, nothing else:`;
 Generate only the improved text, nothing else:`;
         }
 
-        const result = await promptClaude(systemPrompt, 'haiku');
+        const result = await promptClaude(systemPrompt);
 
         res.json({
             generated: typeof result === 'string' ? result.trim() : result,
@@ -359,7 +359,7 @@ Example: [{"index":1,"industry":"Restaurant"},{"index":2,"industry":"Real Estate
 
 JSON:`;
 
-        const result = await promptClaude(prompt, 'haiku');
+        const result = await promptClaude(prompt);
 
         // Parse the JSON response
         let classifications;
