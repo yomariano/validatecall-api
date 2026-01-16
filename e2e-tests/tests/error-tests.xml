@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestGroup name="Error Handling" priority="high" tags="errors,edge-cases,resilience">
+  <TestCase id="ERROR-001" name="Network Failure During Lead Scraping" priority="high" tags="error-handling,resilience">
+    <Description>Handle network interruption gracefully</Description>
+    <Preconditions><Precondition>User logged in</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">Navigate to Leads</Step>
+      <Step id="2" action="start-scrape" keyword="dentists" location="Dublin">Start lead scrape</Step>
+      <Step id="3" action="wait" duration="5000">Wait 5 seconds</Step>
+      <Step id="4" action="disable-network">Disable network mid-scrape</Step>
+      <Step id="5" action="wait" condition="element-visible" selector=".alert-error" timeout="10000">Wait for error message</Step>
+      <Step id="6" action="assert" type="element-contains-text" selector=".alert-error" expected="network">Verify error message shown</Step>
+      <Step id="7" action="enable-network">Re-enable network</Step>
+      <Step id="8" action="assert" type="element-exists" selector="button[data-testid='retry']">Verify retry option available</Step>
+    </Steps>
+    <ExpectedResults><Result>Error message shown</Result><Result>Partial results saved</Result><Result>Retry option available</Result></ExpectedResults>
+    <Assertions><Assert type="element-contains-text" selector=".alert-error" expected="network" /></Assertions>
+  </TestCase>
+  <TestCase id="ERROR-002" name="Invalid Phone Number Format" priority="medium" tags="error-handling,validation">
+    <Description>Validate phone numbers before calling</Description>
+    <Preconditions><Precondition>Lead with invalid phone exists</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="create-lead" phone="123456">Import lead with phone: "123456"</Step>
+      <Step id="2" action="navigate" target="/leads">Navigate to Leads</Step>
+      <Step id="3" action="click" target="table tbody tr:first-child button[data-testid='call-lead']">Attempt to call lead</Step>
+      <Step id="4" action="wait" condition="element-visible" selector=".alert-error" timeout="3000">Wait for validation error</Step>
+      <Step id="5" action="assert" type="element-contains-text" selector=".alert-error" expected="invalid">Verify validation error</Step>
+      <Step id="6" action="assert" type="element-contains-text" selector=".alert-error" expected="phone">Verify mentions phone</Step>
+    </Steps>
+    <ExpectedResults><Result>Validation error</Result><Result>Clear message</Result><Result>Call not initiated</Result></ExpectedResults>
+    <Assertions><Assert type="element-contains-text" selector=".alert-error" expected="invalid" /></Assertions>
+  </TestCase>
+  <TestCase id="ERROR-003" name="Concurrent Call Limit" priority="medium" tags="error-handling,concurrency">
+    <Description>Handle simultaneous call requests</Description>
+    <Preconditions><Precondition>Campaign with 10 leads</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="create-campaign" leads="10">Create campaign</Step>
+      <Step id="2" action="click" target="button[data-testid='call-all']">Click Call All</Step>
+      <Step id="3" action="click" target="button[data-testid='call-all']">Click Call All again (race condition)</Step>
+      <Step id="4" action="click" target="button[data-testid='call-all']">Click Call All again</Step>
+      <Step id="5" action="wait" duration="30000">Wait for processing</Step>
+      <Step id="6" action="api-call" endpoint="/api/supabase/calls" method="GET" params="?campaign_id=123">Check call records</Step>
+      <Step id="7" action="assert" type="api-response-count" expected="10">Verify exactly 10 calls (de-duplication works)</Step>
+    </Steps>
+    <ExpectedResults><Result>De-duplication prevents double-calls</Result><Result>Clear status messages</Result></ExpectedResults>
+    <Assertions><Assert type="api-response-count" expected="10" /></Assertions>
+  </TestCase>
+  <TestCase id="ERROR-004" name="API Rate Limit Handling" priority="high" tags="error-handling,resilience">
+    <Description>Graceful degradation when APIs rate-limited</Description>
+    <Preconditions><Precondition>Rate limit can be triggered</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="trigger-rapid-api-calls" count="100">Trigger rapid API calls</Step>
+      <Step id="2" action="wait" condition="api-response-status" status="429" timeout="10000">Wait for rate limit</Step>
+      <Step id="3" action="assert" type="api-response-status" expected="429">Verify 429 Too Many Requests</Step>
+      <Step id="4" action="wait" condition="element-visible" selector=".alert-warning" timeout="5000">Wait for user message</Step>
+      <Step id="5" action="assert" type="element-contains-text" selector=".alert-warning" expected="try again">Verify user-friendly error</Step>
+      <Step id="6" action="wait" duration="5000">Wait for backoff period</Step>
+      <Step id="7" action="retry-api-call">Retry operation</Step>
+      <Step id="8" action="assert" type="api-response-status" expected="200">Verify retry succeeds</Step>
+    </Steps>
+    <ExpectedResults><Result>User-friendly error</Result><Result>Retry logic with exponential backoff</Result></ExpectedResults>
+    <Assertions><Assert type="api-response-status" expected="429" /></Assertions>
+  </TestCase>
+</TestGroup>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestGroup name="Dashboard" priority="high" tags="dashboard,analytics">
+  <TestCase id="DASH-001" name="Dashboard Stats Display" priority="high" tags="dashboard,analytics">
+    <Description>Verify dashboard shows correct metrics</Description>
+    <Preconditions><Precondition>User with 25 leads, 10 calls, 2 campaigns</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/dashboard">Navigate to Dashboard</Step>
+      <Step id="2" action="assert" type="element-contains-text" selector="[data-testid='stat-leads']" expected="25">Verify Total Leads: 25</Step>
+      <Step id="3" action="assert" type="element-contains-text" selector="[data-testid='stat-calls']" expected="10">Verify Calls Completed: 10</Step>
+      <Step id="4" action="assert" type="element-contains-text" selector="[data-testid='stat-campaigns']" expected="2">Verify Active Campaigns: 2</Step>
+    </Steps>
+    <ExpectedResults><Result>Dashboard shows accurate metrics</Result></ExpectedResults>
+    <Assertions><Assert type="element-contains-text" selector="[data-testid='stat-leads']" expected="25" /></Assertions>
+  </TestCase>
+  <TestCase id="DASH-002" name="Recent Leads/Calls Lists" priority="medium" tags="dashboard">
+    <Description>Show latest activity in dashboard tables</Description>
+    <Preconditions><Precondition>10+ leads and calls exist</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/dashboard">Navigate to Dashboard</Step>
+      <Step id="2" action="assert" type="element-count" selector="[data-testid='recent-leads'] tbody tr" expected="5">Verify 5 recent leads</Step>
+      <Step id="3" action="assert" type="element-count" selector="[data-testid='recent-calls'] tbody tr" expected="5">Verify 5 recent calls</Step>
+      <Step id="4" action="click" target="a[href='/leads']">Click View All Leads</Step>
+      <Step id="5" action="assert" type="url-match" pattern="/leads">Verify redirect to Leads</Step>
+    </Steps>
+    <ExpectedResults><Result>5 most recent items in each table</Result></ExpectedResults>
+    <Assertions><Assert type="element-count" selector="[data-testid='recent-leads'] tbody tr" expected="5" /></Assertions>
+  </TestCase>
+  <TestCase id="DASH-003" name="Service Health Indicators" priority="medium" tags="dashboard,monitoring">
+    <Description>Display configuration status alerts</Description>
+    <Preconditions><Precondition>Missing Vapi key (simulated)</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/dashboard">Navigate to Dashboard</Step>
+      <Step id="2" action="assert" type="element-exists" selector="[data-testid='setup-alert']">Verify Complete Setup alert</Step>
+      <Step id="3" action="assert" type="element-contains-text" selector="[data-testid='setup-alert']" expected="Vapi">Verify Vapi mentioned</Step>
+    </Steps>
+    <ExpectedResults><Result>Alert shows unconfigured services</Result></ExpectedResults>
+    <Assertions><Assert type="element-exists" selector="[data-testid='setup-alert']" /></Assertions>
+  </TestCase>
+</TestGroup>

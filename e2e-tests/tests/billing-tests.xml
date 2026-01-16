@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Billing & Subscriptions Test Suite
+  Tests subscription flows, payment processing, usage limits, and revenue protection
+
+  Test Count: 7
+  Priority: Critical
+  Tags: smoke, billing, stripe, revenue
+-->
+<TestGroup name="Billing" priority="critical" tags="smoke,billing,stripe,revenue">
+
+  <TestCase id="BILL-001" name="Free Tier Soft Paywall (80% Usage)" priority="critical" tags="smoke,billing,limits">
+    <Description>Show warning modal at 80% of free tier limits</Description>
+    <Preconditions><Precondition>User logged in as free tier</Precondition><Precondition>8/10 leads used</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">Navigate to Leads</Step>
+      <Step id="2" action="assert" type="element-contains-text" selector="[data-testid='usage-meter']" expected="8/10">Verify 8/10</Step>
+      <Step id="3" action="click" target="button[data-testid='start-scrape']">Attempt scrape</Step>
+      <Step id="4" action="wait" condition="element-visible" selector="[data-testid='soft-paywall-modal']" timeout="2000">Soft paywall appears</Step>
+      <Step id="5" action="assert" type="element-contains-text" selector="[data-testid='soft-paywall-modal']" expected="80%">Verify modal mentions 80%</Step>
+      <Step id="6" action="assert" type="element-exists" selector="button:has-text('Upgrade')">Verify upgrade CTA</Step>
+      <Step id="7" action="assert" type="element-exists" selector="button[data-testid='continue-anyway']">Verify continue option</Step>
+    </Steps>
+    <ExpectedResults><Result>Soft paywall modal appears</Result><Result>Allows continuation with upgrade prompt</Result></ExpectedResults>
+    <Assertions><Assert type="element-exists" selector="[data-testid='soft-paywall-modal']" /><Assert type="element-contains-text" selector="[data-testid='soft-paywall-modal']" expected="80%" /></Assertions>
+  </TestCase>
+
+  <TestCase id="BILL-002" name="Free Tier Hard Paywall (100% Usage)" priority="critical" tags="smoke,billing,limits">
+    <Description>Block actions when free tier exhausted</Description>
+    <Preconditions><Precondition>Free tier user</Precondition><Precondition>10/10 leads, 5/5 calls used</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">Navigate to Leads</Step>
+      <Step id="2" action="assert" type="element-contains-text" selector="[data-testid='usage-meter']" expected="10/10">Verify limit reached</Step>
+      <Step id="3" action="click" target="button[data-testid='start-scrape']">Attempt lead generation</Step>
+      <Step id="4" action="wait" condition="element-visible" selector="[data-testid='hard-paywall']" timeout="2000">Hard paywall blocks</Step>
+      <Step id="5" action="assert" type="element-contains-text" selector="[data-testid='hard-paywall']" expected="limit reached">Verify blocking message</Step>
+      <Step id="6" action="navigate" target="/campaigns">Navigate to Campaigns</Step>
+      <Step id="7" action="click" target="button[data-testid='call-all']">Attempt campaign call</Step>
+      <Step id="8" action="wait" condition="element-visible" selector="[data-testid='hard-paywall']" timeout="2000">Hard paywall blocks calls too</Step>
+    </Steps>
+    <ExpectedResults><Result>Hard paywall blocks action entirely</Result><Result>No workaround available</Result></ExpectedResults>
+    <Assertions><Assert type="element-exists" selector="[data-testid='hard-paywall']" /><Assert type="element-contains-text" selector="[data-testid='hard-paywall']" expected="limit reached" /></Assertions>
+  </TestCase>
+
+  <TestCase id="BILL-003" name="Stripe Payment - Lite Plan Subscription" priority="critical" tags="smoke,billing,stripe,revenue">
+    <Description>Successfully subscribe to Lite plan ($197/month)</Description>
+    <Preconditions><Precondition>User logged in</Precondition><Precondition>Stripe test mode enabled</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/pricing">Navigate to Pricing</Step>
+      <Step id="2" action="click" target="button[data-plan='lite']">Click "Start with Lite"</Step>
+      <Step id="3" action="wait" condition="url-contains" value="stripe.com/checkout" timeout="5000">Redirect to Stripe</Step>
+      <Step id="4" action="input" target="input[name='cardNumber']" value="4242424242424242">Enter test card</Step>
+      <Step id="5" action="input" target="input[name='cardExpiry']" value="12/25">Enter expiry</Step>
+      <Step id="6" action="input" target="input[name='cardCvc']" value="123">Enter CVC</Step>
+      <Step id="7" action="click" target="button[type='submit']">Submit payment</Step>
+      <Step id="8" action="wait" condition="url-contains" value="/dashboard" timeout="10000">Wait for redirect back</Step>
+      <Step id="9" action="assert" type="url-contains" expected="/dashboard">Verify back to dashboard</Step>
+      <Step id="10" action="api-call" endpoint="/api/supabase/user-subscriptions" method="GET">Check subscription</Step>
+      <Step id="11" action="assert" type="api-response-field" field="data[0].plan" expected="Lite">Verify Lite plan</Step>
+      <Step id="12" action="assert" type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="/100">Verify limits updated (100 calls)</Step>
+    </Steps>
+    <ExpectedResults><Result>Subscription active</Result><Result>Limits updated to 100 calls</Result><Result>Usage meter reflects plan</Result></ExpectedResults>
+    <Assertions><Assert type="url-contains" expected="/dashboard" /><Assert type="api-response-field" field="data[0].plan" expected="Lite" /><Assert type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="/100" /></Assertions>
+  </TestCase>
+
+  <TestCase id="BILL-004" name="Stripe Payment - Starter Plan" priority="critical" tags="smoke,billing,stripe,revenue">
+    <Description>Subscribe to Starter plan ($497/month - most popular tier)</Description>
+    <Preconditions><Precondition>User logged in</Precondition><Precondition>Stripe test mode</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/pricing">Navigate to Pricing</Step>
+      <Step id="2" action="click" target="button[data-plan='starter']">Click "Start with Starter"</Step>
+      <Step id="3" action="complete-stripe-payment" card="4242424242424242">Complete payment</Step>
+      <Step id="4" action="wait" condition="url-contains" value="/dashboard" timeout="10000">Wait for redirect</Step>
+      <Step id="5" action="api-call" endpoint="/api/supabase/user-subscriptions" method="GET">Check subscription</Step>
+      <Step id="6" action="assert" type="api-response-field" field="data[0].plan" expected="Starter">Verify Starter plan</Step>
+      <Step id="7" action="assert" type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="/500">Verify 500 call limit</Step>
+    </Steps>
+    <ExpectedResults><Result>Starter subscription active</Result><Result>All features unlocked</Result></ExpectedResults>
+    <Assertions><Assert type="api-response-field" field="data[0].plan" expected="Starter" /><Assert type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="/500" /></Assertions>
+  </TestCase>
+
+  <TestCase id="BILL-005" name="Stripe Payment Failure Handling" priority="high" tags="billing,error-handling">
+    <Description>Handle declined card gracefully</Description>
+    <Preconditions><Precondition>User logged in</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/pricing">Navigate to Pricing</Step>
+      <Step id="2" action="click" target="button[data-plan='lite']">Select plan</Step>
+      <Step id="3" action="input" target="input[name='cardNumber']" value="4000000000000002">Enter declined test card</Step>
+      <Step id="4" action="input" target="input[name='cardExpiry']" value="12/25">Enter expiry</Step>
+      <Step id="5" action="input" target="input[name='cardCvc']" value="123">Enter CVC</Step>
+      <Step id="6" action="click" target="button[type='submit']">Submit payment</Step>
+      <Step id="7" action="wait" condition="element-visible" selector=".error-message" timeout="5000">Wait for error</Step>
+      <Step id="8" action="assert" type="element-contains-text" selector=".error-message" expected="declined">Verify error message from Stripe</Step>
+      <Step id="9" action="assert" type="url-contains" expected="stripe.com/checkout">Verify still on payment page</Step>
+      <Step id="10" action="assert" type="element-exists" selector="button[type='submit']">Verify can retry</Step>
+    </Steps>
+    <ExpectedResults><Result>Error message from Stripe</Result><Result>User remains on payment page</Result><Result>Can retry</Result></ExpectedResults>
+    <Assertions><Assert type="element-contains-text" selector=".error-message" expected="declined" /><Assert type="element-exists" selector="button[type='submit']" /></Assertions>
+  </TestCase>
+
+  <TestCase id="BILL-006" name="Subscription Upgrade (Lite to Pro)" priority="high" tags="billing,stripe">
+    <Description>Upgrade to higher tier mid-cycle</Description>
+    <Preconditions><Precondition>Active Lite subscription</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="login" user="lite-sub">Login with Lite subscription</Step>
+      <Step id="2" action="navigate" target="/billing">Navigate to Billing</Step>
+      <Step id="3" action="assert" type="element-contains-text" selector=".current-plan" expected="Lite">Verify current plan</Step>
+      <Step id="4" action="click" target="button[data-plan='pro']">Click "Start with Pro"</Step>
+      <Step id="5" action="complete-stripe-payment" card="4242424242424242">Complete payment</Step>
+      <Step id="6" action="wait" condition="url-contains" value="/dashboard" timeout="10000">Wait for redirect</Step>
+      <Step id="7" action="api-call" endpoint="/api/supabase/user-subscriptions" method="GET">Check subscription</Step>
+      <Step id="8" action="assert" type="api-response-field" field="data[0].plan" expected="Pro">Verify upgraded to Pro</Step>
+      <Step id="9" action="assert" type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="/2000">Verify Pro limits (2000 calls)</Step>
+    </Steps>
+    <ExpectedResults><Result>Proration applied</Result><Result>Subscription upgraded immediately</Result><Result>Limits increase</Result></ExpectedResults>
+    <Assertions><Assert type="api-response-field" field="data[0].plan" expected="Pro" /><Assert type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="/2000" /></Assertions>
+  </TestCase>
+
+  <TestCase id="BILL-007" name="Stripe Customer Portal Access" priority="medium" tags="billing,stripe">
+    <Description>Manage subscription via Stripe portal</Description>
+    <Preconditions><Precondition>Active subscription exists</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="login" user="lite-sub">Login with subscription</Step>
+      <Step id="2" action="navigate" target="/billing">Navigate to Billing</Step>
+      <Step id="3" action="click" target="button[data-testid='manage-subscription']">Click "Manage Subscription"</Step>
+      <Step id="4" action="wait" condition="url-contains" value="billing.stripe.com/p/customer_portal" timeout="5000">Wait for redirect to portal</Step>
+      <Step id="5" action="assert" type="url-contains" expected="stripe.com">Verify on Stripe portal</Step>
+      <Step id="6" action="assert" type="element-exists" selector="button:has-text('Update payment method')">Verify portal options visible</Step>
+      <Step id="7" action="assert" type="element-exists" selector="button:has-text('Cancel subscription')">Verify cancel option available</Step>
+    </Steps>
+    <ExpectedResults><Result>Portal opens</Result><Result>Changes sync back to app</Result></ExpectedResults>
+    <Assertions><Assert type="url-contains" expected="stripe.com" /><Assert type="element-exists" selector="button:has-text('Update payment method')" /></Assertions>
+  </TestCase>
+
+</TestGroup>

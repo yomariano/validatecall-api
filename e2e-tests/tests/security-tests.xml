@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestGroup name="Security" priority="critical" tags="smoke,security,auth">
+  <TestCase id="SEC-001" name="Stripe Webhook Signature Verification" priority="critical" tags="smoke,security,stripe,revenue">
+    <Description>Verify Stripe webhook rejects unsigned requests</Description>
+    <Preconditions>
+      <Precondition>Backend API running</Precondition>
+      <Precondition>STRIPE_WEBHOOK_SECRET configured</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="api-call" endpoint="/api/stripe/webhook" method="POST" body='{"type":"checkout.session.completed"}' headers='{}'>
+        <Description>Send webhook without signature header</Description>
+        <Expected>Request rejected with 401</Expected>
+      </Step>
+      <Step id="2" action="assert" type="api-response-status" expected="401">Verify unauthorized response</Step>
+      <Step id="3" action="api-call" endpoint="/api/stripe/webhook" method="POST" body='{"type":"checkout.session.completed"}' headers='{"stripe-signature":"invalid"}'>
+        <Description>Send webhook with invalid signature</Description>
+        <Expected>Request rejected with 401</Expected>
+      </Step>
+      <Step id="4" action="assert" type="api-response-status" expected="401">Verify unauthorized response</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Unsigned webhooks are rejected</Result>
+      <Result>Invalid signatures are rejected</Result>
+      <Result>No subscription created from forged webhooks</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="api-response-status" expected="401" />
+      <Assert type="api-response-field" field="error" contains="signature" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="SEC-002" name="Multi-Tenant User Access Validation" priority="critical" tags="smoke,security,auth">
+    <Description>Verify users cannot access other users' data via multi-tenant endpoints</Description>
+    <Preconditions>
+      <Precondition>User A authenticated</Precondition>
+      <Precondition>User B exists with different ID</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="authenticate" user="user-a">Login as User A</Step>
+      <Step id="2" action="api-call" endpoint="/api/vapi/user/{user-b-id}/phone-stats" method="GET">
+        <Description>Attempt to access User B's phone stats</Description>
+        <Expected>Request rejected with 403</Expected>
+      </Step>
+      <Step id="3" action="assert" type="api-response-status" expected="403">Verify forbidden response</Step>
+      <Step id="4" action="api-call" endpoint="/api/vapi/user/{user-b-id}/call" method="POST" body='{"phoneNumber":"+353-1-555-0001"}'>
+        <Description>Attempt to make call as User B</Description>
+        <Expected>Request rejected with 403</Expected>
+      </Step>
+      <Step id="5" action="assert" type="api-response-status" expected="403">Verify forbidden response</Step>
+      <Step id="6" action="api-call" endpoint="/api/vapi/user/{user-b-id}/phone-numbers" method="GET">
+        <Description>Attempt to list User B's phone numbers</Description>
+        <Expected>Request rejected with 403</Expected>
+      </Step>
+      <Step id="7" action="assert" type="api-response-status" expected="403">Verify forbidden response</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Users cannot access other users' phone stats</Result>
+      <Result>Users cannot make calls on behalf of other users</Result>
+      <Result>Users cannot view other users' phone numbers</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="api-response-status" expected="403" />
+      <Assert type="api-response-field" field="error" contains="Access denied" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="SEC-003" name="Free Tier Call Rollback on Failure" priority="high" tags="security,calls,free-tier">
+    <Description>Verify call count is rolled back when VAPI call fails</Description>
+    <Preconditions>
+      <Precondition>Free tier user authenticated</Precondition>
+      <Precondition>User has calls remaining in quota</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="api-call" endpoint="/api/usage/{userId}" method="GET">
+        <Description>Get initial call count</Description>
+      </Step>
+      <Step id="2" action="store" variable="initialCallCount" field="usage.callsUsed">Store initial count</Step>
+      <Step id="3" action="api-call" endpoint="/api/vapi/user/{userId}/call" method="POST" body='{"phoneNumber":"invalid_number"}'>
+        <Description>Attempt call with invalid number (will fail)</Description>
+        <Expected>Call fails</Expected>
+      </Step>
+      <Step id="4" action="wait" duration="2000">Wait for rollback processing</Step>
+      <Step id="5" action="api-call" endpoint="/api/usage/{userId}" method="GET">
+        <Description>Get call count after failure</Description>
+      </Step>
+      <Step id="6" action="assert" type="variable-equals" field="usage.callsUsed" expected="{initialCallCount}">
+        <Description>Verify call count was rolled back</Description>
+      </Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Failed calls do not consume quota</Result>
+      <Result>Call count remains unchanged after failure</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="variable-equals" field="usage.callsUsed" expected="{initialCallCount}" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="SEC-004" name="API Key Environment Variable Usage" priority="high" tags="security,configuration">
+    <Description>Verify sensitive data comes from environment variables not hardcoded</Description>
+    <Preconditions>
+      <Precondition>Application running</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="api-call" endpoint="/health" method="GET">
+        <Description>Check health endpoint</Description>
+      </Step>
+      <Step id="2" action="assert" type="response-not-contains" text="AIzaSy">
+        <Description>Verify no Google API keys in response</Description>
+      </Step>
+      <Step id="3" action="assert" type="response-not-contains" text="sk_live">
+        <Description>Verify no Stripe secret keys in response</Description>
+      </Step>
+      <Step id="4" action="assert" type="response-not-contains" text="sk_test">
+        <Description>Verify no Stripe test keys in response</Description>
+      </Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>No API keys exposed in API responses</Result>
+      <Result>Sensitive configuration from environment only</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="response-not-contains" text="AIzaSy" />
+      <Assert type="response-not-contains" text="sk_" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="SEC-005" name="RLS Policy Enforcement" priority="critical" tags="security,database,rls">
+    <Description>Verify Row Level Security prevents unauthorized data access</Description>
+    <Preconditions>
+      <Precondition>User A authenticated</Precondition>
+      <Precondition>User B has existing leads</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="authenticate" user="user-a">Login as User A</Step>
+      <Step id="2" action="api-call" endpoint="/api/supabase/leads" method="GET">
+        <Description>Fetch leads as User A</Description>
+      </Step>
+      <Step id="3" action="assert" type="response-field-all" field="data[*].user_id" expected="{user-a-id}">
+        <Description>Verify all returned leads belong to User A</Description>
+      </Step>
+      <Step id="4" action="assert" type="response-field-none" field="data[*].user_id" expected="{user-b-id}">
+        <Description>Verify no leads from User B are returned</Description>
+      </Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Users only see their own leads</Result>
+      <Result>RLS policies properly enforced</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="response-field-all" field="data[*].user_id" expected="{user-a-id}" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="SEC-006" name="Authentication Required for Protected Endpoints" priority="critical" tags="smoke,security,auth">
+    <Description>Verify unauthenticated requests are rejected</Description>
+    <Preconditions>
+      <Precondition>No authentication token</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="api-call" endpoint="/api/supabase/leads" method="GET" headers='{}'>
+        <Description>Attempt to get leads without auth (production)</Description>
+        <Note>In dev mode with localhost, this may succeed with mock user</Note>
+      </Step>
+      <Step id="2" action="api-call" endpoint="/api/vapi/user/invalid-user/call" method="POST" body='{"phoneNumber":"+1555"}' headers='{}'>
+        <Description>Attempt to make call without auth</Description>
+        <Expected>Request rejected</Expected>
+      </Step>
+      <Step id="3" action="assert" type="api-response-status" expected="403">Verify forbidden response</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Protected endpoints require authentication</Result>
+      <Result>Unauthenticated requests receive 401/403</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="api-response-status" oneOf="401,403" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="SEC-007" name="Input Validation on API Endpoints" priority="high" tags="security,validation">
+    <Description>Verify API endpoints validate and sanitize input</Description>
+    <Preconditions>
+      <Precondition>User authenticated</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="api-call" endpoint="/api/vapi/user/{userId}/call" method="POST" body='{}'>
+        <Description>Attempt call without phoneNumber</Description>
+        <Expected>Request rejected with 400</Expected>
+      </Step>
+      <Step id="2" action="assert" type="api-response-status" expected="400">Verify bad request response</Step>
+      <Step id="3" action="api-call" endpoint="/api/claude/generate-leads" method="POST" body='{"keyword":""}'>
+        <Description>Attempt lead generation with empty keyword</Description>
+        <Expected>Request rejected or returns empty</Expected>
+      </Step>
+      <Step id="4" action="api-call" endpoint="/api/supabase/leads" method="GET" params='?limit=999999'>
+        <Description>Attempt to query with excessive limit</Description>
+        <Expected>Limit should be capped or rejected</Expected>
+      </Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Required fields are validated</Result>
+      <Result>Excessive inputs are bounded</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="api-response-status" oneOf="400,200" />
+    </Assertions>
+  </TestCase>
+</TestGroup>

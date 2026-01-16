@@ -1,0 +1,589 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Authentication & Authorization Test Suite
+  Tests authentication flows, session management, and route protection
+
+  Test Count: 8
+  Priority: Critical
+  Tags: smoke, auth, security
+-->
+<TestGroup name="Authentication" priority="critical" tags="smoke,auth,security">
+
+  <TestCase id="AUTH-001" name="Google OAuth Login Success" priority="critical" tags="smoke,auth,login">
+    <Description>Verify successful Google OAuth authentication flow and session persistence</Description>
+
+    <Preconditions>
+      <Precondition>User not logged in</Precondition>
+      <Precondition>Valid Google OAuth credentials configured</Precondition>
+      <Precondition>Browser cookies cleared</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/">
+        <Description>Navigate to landing page</Description>
+        <Expected>Landing page loads successfully</Expected>
+      </Step>
+
+      <Step id="2" action="click" target="button:has-text('Sign in with Google')">
+        <Description>Click "Sign in with Google" button</Description>
+        <Expected>Redirect to Google OAuth consent screen</Expected>
+      </Step>
+
+      <Step id="3" action="oauth" provider="google">
+        <Description>Complete Google OAuth consent flow</Description>
+        <Data>
+          <Email>test-free@validatecall.com</Email>
+          <Password>Test123!</Password>
+        </Data>
+        <Expected>OAuth successful, redirect back to app</Expected>
+      </Step>
+
+      <Step id="4" action="wait" condition="url-contains" value="/dashboard" timeout="5000">
+        <Description>Wait for redirect to dashboard</Description>
+        <Expected>URL contains "/dashboard"</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="url-match" pattern="/dashboard">
+        <Description>Verify user redirected to dashboard</Description>
+        <Expected>Current URL is /dashboard</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="element-exists" selector="[data-testid='user-avatar']">
+        <Description>Verify user avatar displayed in sidebar</Description>
+        <Expected>User avatar element present</Expected>
+      </Step>
+
+      <Step id="7" action="refresh">
+        <Description>Refresh the page</Description>
+        <Expected>Page reloads</Expected>
+      </Step>
+
+      <Step id="8" action="assert" type="url-match" pattern="/dashboard">
+        <Description>Verify user still on dashboard after refresh</Description>
+        <Expected>Session persists, still on /dashboard</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>User successfully authenticated via Google OAuth</Result>
+      <Result>Redirected to /dashboard after login</Result>
+      <Result>Session persists across page refreshes</Result>
+      <Result>Auth token stored in local storage</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="url-match" expected="/dashboard" />
+      <Assert type="element-exists" selector="[data-testid='user-avatar']" />
+      <Assert type="local-storage" key="supabase.auth.token" exists="true" />
+      <Assert type="element-not-exists" selector="button:has-text('Sign in with Google')" />
+    </Assertions>
+
+    <Cleanup>
+      <Action>Logout user</Action>
+      <Action>Clear browser storage</Action>
+    </Cleanup>
+  </TestCase>
+
+  <TestCase id="AUTH-002" name="Protected Route Access Without Login" priority="critical" tags="smoke,auth,security">
+    <Description>Ensure unauthenticated users cannot access protected routes and are redirected to landing page</Description>
+
+    <Preconditions>
+      <Precondition>User not logged in</Precondition>
+      <Precondition>No valid session exists</Precondition>
+      <Precondition>Browser storage cleared</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/dashboard">
+        <Description>Attempt to access dashboard without login</Description>
+        <Expected>Redirect to landing page</Expected>
+      </Step>
+
+      <Step id="2" action="wait" condition="url-match" value="/" timeout="3000">
+        <Description>Wait for redirect</Description>
+        <Expected>Redirected to landing page</Expected>
+      </Step>
+
+      <Step id="3" action="assert" type="url-match" pattern="/">
+        <Description>Verify redirect to landing page</Description>
+        <Expected>Current URL is /</Expected>
+      </Step>
+
+      <Step id="4" action="navigate" target="/leads">
+        <Description>Attempt to access leads page</Description>
+        <Expected>Redirect to landing page</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="url-match" pattern="/">
+        <Description>Verify redirect to landing page</Description>
+        <Expected>Current URL is /</Expected>
+      </Step>
+
+      <Step id="6" action="navigate" target="/campaigns">
+        <Description>Attempt to access campaigns page</Description>
+        <Expected>Redirect to landing page</Expected>
+      </Step>
+
+      <Step id="7" action="assert" type="url-match" pattern="/">
+        <Description>Verify redirect to landing page</Description>
+        <Expected>Current URL is /</Expected>
+      </Step>
+
+      <Step id="8" action="navigate" target="/agents">
+        <Description>Attempt to access agents page</Description>
+        <Expected>Redirect to landing page</Expected>
+      </Step>
+
+      <Step id="9" action="assert" type="url-match" pattern="/">
+        <Description>Verify redirect to landing page</Description>
+        <Expected>Current URL is /</Expected>
+      </Step>
+
+      <Step id="10" action="navigate" target="/history">
+        <Description>Attempt to access history page</Description>
+        <Expected>Redirect to landing page</Expected>
+      </Step>
+
+      <Step id="11" action="assert" type="url-match" pattern="/">
+        <Description>Verify redirect to landing page</Description>
+        <Expected>Current URL is /</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>All protected routes redirect to landing page</Result>
+      <Result>No sensitive data exposed to unauthenticated users</Result>
+      <Result>ProtectedRoute component functions correctly</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="url-match" expected="/" description="All protected routes redirect to /" />
+      <Assert type="element-not-exists" selector="[data-testid='lead-table']" description="Lead table not visible" />
+      <Assert type="element-not-exists" selector="[data-testid='campaign-form']" description="Campaign form not visible" />
+      <Assert type="element-exists" selector="button:has-text('Sign in with Google')" description="Login button visible" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="AUTH-003" name="Session Persistence Across Browser Restart" priority="high" tags="auth,session">
+    <Description>Verify authentication session survives browser close and reopen</Description>
+
+    <Preconditions>
+      <Precondition>User logged in successfully</Precondition>
+      <Precondition>Valid session token exists</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="login" user="free-tier">
+        <Description>Login as free tier user</Description>
+        <Expected>User authenticated and on dashboard</Expected>
+      </Step>
+
+      <Step id="2" action="assert" type="url-match" pattern="/dashboard">
+        <Description>Verify user on dashboard</Description>
+        <Expected>Current URL is /dashboard</Expected>
+      </Step>
+
+      <Step id="3" action="close-browser">
+        <Description>Close browser completely</Description>
+        <Expected>Browser closed, all windows closed</Expected>
+      </Step>
+
+      <Step id="4" action="wait" duration="2000">
+        <Description>Wait 2 seconds</Description>
+        <Expected>Delay to simulate browser restart</Expected>
+      </Step>
+
+      <Step id="5" action="open-browser">
+        <Description>Reopen browser</Description>
+        <Expected>Fresh browser instance launched</Expected>
+      </Step>
+
+      <Step id="6" action="navigate" target="/dashboard">
+        <Description>Navigate directly to dashboard</Description>
+        <Expected>Session restored, dashboard loads</Expected>
+      </Step>
+
+      <Step id="7" action="wait" condition="element-exists" selector="[data-testid='user-avatar']" timeout="5000">
+        <Description>Wait for dashboard to load</Description>
+        <Expected>Dashboard elements visible</Expected>
+      </Step>
+
+      <Step id="8" action="assert" type="url-match" pattern="/dashboard">
+        <Description>Verify still on dashboard</Description>
+        <Expected>User remains authenticated without re-login</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Session persists across browser restarts</Result>
+      <Result>User remains authenticated without re-login</Result>
+      <Result>Supabase session token retrieved from local storage</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="url-match" expected="/dashboard" />
+      <Assert type="element-exists" selector="[data-testid='user-avatar']" />
+      <Assert type="local-storage" key="supabase.auth.token" exists="true" />
+    </Assertions>
+
+    <Cleanup>
+      <Action>Logout user</Action>
+    </Cleanup>
+  </TestCase>
+
+  <TestCase id="AUTH-004" name="Logout Flow" priority="high" tags="auth,logout">
+    <Description>Verify complete logout, session cleanup, and inability to access protected routes after logout</Description>
+
+    <Preconditions>
+      <Precondition>User logged in successfully</Precondition>
+      <Precondition>User on dashboard page</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="login" user="free-tier">
+        <Description>Login as free tier user</Description>
+        <Expected>User authenticated</Expected>
+      </Step>
+
+      <Step id="2" action="navigate" target="/dashboard">
+        <Description>Navigate to dashboard</Description>
+        <Expected>Dashboard loads</Expected>
+      </Step>
+
+      <Step id="3" action="assert" type="element-exists" selector="[data-testid='user-avatar']">
+        <Description>Verify user logged in</Description>
+        <Expected>User avatar visible</Expected>
+      </Step>
+
+      <Step id="4" action="click" target="button[data-testid='logout-button']">
+        <Description>Click logout button in sidebar</Description>
+        <Expected>Logout initiated</Expected>
+      </Step>
+
+      <Step id="5" action="wait" condition="url-match" value="/" timeout="3000">
+        <Description>Wait for redirect to landing page</Description>
+        <Expected>Redirected to /</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="url-match" pattern="/">
+        <Description>Verify redirect to landing page</Description>
+        <Expected>Current URL is /</Expected>
+      </Step>
+
+      <Step id="7" action="assert" type="element-exists" selector="button:has-text('Sign in with Google')">
+        <Description>Verify login button visible</Description>
+        <Expected>Login button present</Expected>
+      </Step>
+
+      <Step id="8" action="assert" type="local-storage" key="supabase.auth.token" exists="false">
+        <Description>Verify auth token cleared</Description>
+        <Expected>No auth token in storage</Expected>
+      </Step>
+
+      <Step id="9" action="navigate" target="/dashboard">
+        <Description>Attempt to access dashboard after logout</Description>
+        <Expected>Redirect to landing page</Expected>
+      </Step>
+
+      <Step id="10" action="assert" type="url-match" pattern="/">
+        <Description>Verify cannot access protected route</Description>
+        <Expected>Redirected back to /</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>User successfully logged out</Result>
+      <Result>Session cleared from local storage</Result>
+      <Result>Redirected to landing page</Result>
+      <Result>Cannot access protected routes after logout</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="url-match" expected="/" />
+      <Assert type="local-storage" key="supabase.auth.token" exists="false" />
+      <Assert type="element-exists" selector="button:has-text('Sign in with Google')" />
+      <Assert type="element-not-exists" selector="[data-testid='user-avatar']" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="AUTH-005" name="Localhost Development Mode Bypass" priority="medium" tags="auth,dev-mode">
+    <Description>Verify localhost auto-authentication for development (mock user ID bypass)</Description>
+
+    <Preconditions>
+      <Precondition>Running on localhost:5173</Precondition>
+      <Precondition>Development mode enabled</Precondition>
+      <Precondition>No user logged in</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="http://localhost:5173/dashboard">
+        <Description>Navigate directly to dashboard on localhost</Description>
+        <Expected>Auto-authenticated with mock user</Expected>
+      </Step>
+
+      <Step id="2" action="wait" condition="element-exists" selector="[data-testid='usage-meter']" timeout="5000">
+        <Description>Wait for dashboard to load</Description>
+        <Expected>Dashboard loads with mock user data</Expected>
+      </Step>
+
+      <Step id="3" action="assert" type="url-match" pattern="/dashboard">
+        <Description>Verify on dashboard without manual login</Description>
+        <Expected>Current URL is /dashboard</Expected>
+      </Step>
+
+      <Step id="4" action="assert" type="element-exists" selector="[data-testid='lead-table']">
+        <Description>Verify protected content visible</Description>
+        <Expected>Can access protected routes</Expected>
+      </Step>
+
+      <Step id="5" action="api-call" endpoint="/api/supabase/leads" method="GET">
+        <Description>Make API call with mock user ID</Description>
+        <Expected>API accepts mock user ID (00000000-0000-0000-0000-000000000000)</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Localhost development mode bypasses OAuth</Result>
+      <Result>Mock user ID automatically applied</Result>
+      <Result>Can access all protected routes and API endpoints</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="url-match" expected="/dashboard" />
+      <Assert type="element-exists" selector="[data-testid='lead-table']" />
+      <Assert type="api-response" status="200" />
+    </Assertions>
+
+    <Notes>
+      <Note>This test only runs in development environment</Note>
+      <Note>Production builds should not have this bypass</Note>
+    </Notes>
+  </TestCase>
+
+  <TestCase id="AUTH-006" name="Concurrent Session Handling" priority="medium" tags="auth,session,concurrency">
+    <Description>Verify behavior when same user logs in from multiple browsers simultaneously</Description>
+
+    <Preconditions>
+      <Precondition>Two browsers available (Chrome and Firefox)</Precondition>
+      <Precondition>User not logged in</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="open-browser" browser="chrome">
+        <Description>Open Chrome browser</Description>
+        <Expected>Chrome launched</Expected>
+      </Step>
+
+      <Step id="2" action="login" user="free-tier" browser="chrome">
+        <Description>Login in Chrome</Description>
+        <Expected>User authenticated in Chrome</Expected>
+      </Step>
+
+      <Step id="3" action="assert" type="url-match" pattern="/dashboard" browser="chrome">
+        <Description>Verify logged in Chrome</Description>
+        <Expected>Chrome on dashboard</Expected>
+      </Step>
+
+      <Step id="4" action="open-browser" browser="firefox">
+        <Description>Open Firefox browser</Description>
+        <Expected>Firefox launched</Expected>
+      </Step>
+
+      <Step id="5" action="login" user="free-tier" browser="firefox">
+        <Description>Login in Firefox with same account</Description>
+        <Expected>User authenticated in Firefox</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="url-match" pattern="/dashboard" browser="firefox">
+        <Description>Verify logged in Firefox</Description>
+        <Expected>Firefox on dashboard</Expected>
+      </Step>
+
+      <Step id="7" action="assert" type="url-match" pattern="/dashboard" browser="chrome">
+        <Description>Verify Chrome still logged in</Description>
+        <Expected>Chrome session remains active</Expected>
+      </Step>
+
+      <Step id="8" action="click" target="button[data-testid='logout-button']" browser="chrome">
+        <Description>Logout from Chrome</Description>
+        <Expected>Chrome logged out</Expected>
+      </Step>
+
+      <Step id="9" action="assert" type="url-match" pattern="/" browser="chrome">
+        <Description>Verify Chrome redirected to landing</Description>
+        <Expected>Chrome on landing page</Expected>
+      </Step>
+
+      <Step id="10" action="refresh" browser="firefox">
+        <Description>Refresh Firefox</Description>
+        <Expected>Firefox reloads</Expected>
+      </Step>
+
+      <Step id="11" action="assert" type="url-match" pattern="/dashboard" browser="firefox">
+        <Description>Verify Firefox still logged in</Description>
+        <Expected>Firefox session remains active (independent sessions)</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Multiple concurrent sessions allowed</Result>
+      <Result>Sessions are independent</Result>
+      <Result>Logout in one browser doesn't affect others</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="url-match" expected="/dashboard" browser="firefox" description="Firefox remains logged in" />
+      <Assert type="url-match" expected="/" browser="chrome" description="Chrome logged out" />
+    </Assertions>
+
+    <Cleanup>
+      <Action>Logout from all browsers</Action>
+      <Action>Close all browser instances</Action>
+    </Cleanup>
+  </TestCase>
+
+  <TestCase id="AUTH-007" name="Token Expiration Handling" priority="medium" tags="auth,security">
+    <Description>Verify graceful handling when JWT token expires during session</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Valid session token exists</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="login" user="free-tier">
+        <Description>Login as free tier user</Description>
+        <Expected>User authenticated</Expected>
+      </Step>
+
+      <Step id="2" action="navigate" target="/dashboard">
+        <Description>Navigate to dashboard</Description>
+        <Expected>Dashboard loads</Expected>
+      </Step>
+
+      <Step id="3" action="local-storage-modify" key="supabase.auth.token">
+        <Description>Manually expire the auth token</Description>
+        <Data>
+          <ModifyExpiration>past</ModifyExpiration>
+        </Data>
+        <Expected>Token expiration date set to past</Expected>
+      </Step>
+
+      <Step id="4" action="api-call" endpoint="/api/supabase/leads" method="GET">
+        <Description>Attempt API call with expired token</Description>
+        <Expected>API returns 401 Unauthorized</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="api-response" status="401">
+        <Description>Verify 401 error response</Description>
+        <Expected>Unauthorized status</Expected>
+      </Step>
+
+      <Step id="6" action="wait" condition="element-exists" selector=".alert-error" timeout="5000">
+        <Description>Wait for error message to appear</Description>
+        <Expected>Error message displayed</Expected>
+      </Step>
+
+      <Step id="7" action="assert" type="element-exists" selector=".alert-error">
+        <Description>Verify error message shown to user</Description>
+        <Expected>User-friendly error message visible</Expected>
+      </Step>
+
+      <Step id="8" action="wait" condition="url-match" value="/" timeout="3000">
+        <Description>Wait for redirect to login</Description>
+        <Expected>Redirected to landing page for re-authentication</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Expired token detected</Result>
+      <Result>API returns 401 error</Result>
+      <Result>User prompted to re-authenticate</Result>
+      <Result>No application crash or unhandled errors</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="api-response" status="401" />
+      <Assert type="element-exists" selector=".alert-error" />
+      <Assert type="url-match" expected="/" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="AUTH-008" name="Invalid OAuth State Parameter" priority="low" tags="auth,security,csrf">
+    <Description>Verify protection against OAuth CSRF attacks via state parameter validation</Description>
+
+    <Preconditions>
+      <Precondition>User not logged in</Precondition>
+      <Precondition>OAuth flow initiated</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/">
+        <Description>Navigate to landing page</Description>
+        <Expected>Landing page loads</Expected>
+      </Step>
+
+      <Step id="2" action="click" target="button:has-text('Sign in with Google')">
+        <Description>Initiate OAuth flow</Description>
+        <Expected>Redirect to Google OAuth</Expected>
+      </Step>
+
+      <Step id="3" action="wait" condition="url-contains" value="accounts.google.com" timeout="5000">
+        <Description>Wait for Google OAuth page</Description>
+        <Expected>On Google OAuth consent page</Expected>
+      </Step>
+
+      <Step id="4" action="url-modify" parameter="state">
+        <Description>Modify OAuth state parameter in URL</Description>
+        <Data>
+          <NewValue>malicious-state-value-12345</NewValue>
+        </Data>
+        <Expected>State parameter tampered</Expected>
+      </Step>
+
+      <Step id="5" action="oauth-complete" provider="google">
+        <Description>Complete OAuth with tampered state</Description>
+        <Expected>OAuth callback with invalid state</Expected>
+      </Step>
+
+      <Step id="6" action="wait" condition="element-exists" selector=".alert-error" timeout="5000">
+        <Description>Wait for error message</Description>
+        <Expected>Authentication rejected</Expected>
+      </Step>
+
+      <Step id="7" action="assert" type="element-exists" selector=".alert-error">
+        <Description>Verify error message displayed</Description>
+        <Expected>Error: Invalid state parameter</Expected>
+      </Step>
+
+      <Step id="8" action="assert" type="url-match" pattern="/">
+        <Description>Verify user not authenticated</Description>
+        <Expected>Remains on landing page, not logged in</Expected>
+      </Step>
+
+      <Step id="9" action="assert" type="local-storage" key="supabase.auth.token" exists="false">
+        <Description>Verify no auth token created</Description>
+        <Expected>No token in storage</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Invalid state parameter detected</Result>
+      <Result>Authentication rejected</Result>
+      <Result>User not logged in</Result>
+      <Result>CSRF attack prevented</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="element-exists" selector=".alert-error" />
+      <Assert type="url-match" expected="/" />
+      <Assert type="local-storage" key="supabase.auth.token" exists="false" />
+    </Assertions>
+
+    <Notes>
+      <Note>This test verifies CSRF protection in OAuth flow</Note>
+      <Note>State parameter should be validated server-side</Note>
+    </Notes>
+  </TestCase>
+
+</TestGroup>

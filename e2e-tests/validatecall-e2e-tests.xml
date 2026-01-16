@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ValidateCall E2E Test Suite
+  Comprehensive end-to-end testing for the ValidateCall AI market research platform
+
+  This test suite covers 71 critical test scenarios across 11 feature areas:
+  - Authentication & Authorization (8 tests)
+  - Lead Management (12 tests)
+  - Campaign Management (10 tests)
+  - Voice Agent Configuration (7 tests)
+  - Call Execution & Scheduling (6 tests)
+  - Billing & Subscriptions (7 tests)
+  - Dashboard & Analytics (3 tests)
+  - Call History & Analytics (3 tests)
+  - Integration Testing (4 tests)
+  - Error Handling & Edge Cases (4 tests)
+  - Security (7 tests) - NEW: Webhook verification, multi-tenant isolation, RLS enforcement
+-->
+<TestSuite name="ValidateCall E2E Tests" project="validatecall" version="1.0">
+
+  <!-- Environment Configuration -->
+  <Configuration>
+    <Environments>
+      <Environment name="development">
+        <BaseURL>http://localhost:5173</BaseURL>
+        <API>http://localhost:3002</API>
+        <Database>supabase-dev</Database>
+        <StripeMode>test</StripeMode>
+      </Environment>
+      <Environment name="staging">
+        <BaseURL>https://staging.validatecall.com</BaseURL>
+        <API>https://api-staging.validatecall.com</API>
+        <Database>supabase-staging</Database>
+        <StripeMode>test</StripeMode>
+      </Environment>
+      <Environment name="production">
+        <BaseURL>https://validatecall.com</BaseURL>
+        <API>https://api.validatecall.com</API>
+        <Database>supabase-prod</Database>
+        <StripeMode>live</StripeMode>
+      </Environment>
+    </Environments>
+
+    <DefaultEnvironment>development</DefaultEnvironment>
+
+    <Timeouts>
+      <Default>30000</Default><!-- 30 seconds -->
+      <LongRunning>120000</LongRunning><!-- 2 minutes for scraping/batch calls -->
+      <APICall>10000</APICall><!-- 10 seconds for API calls -->
+    </Timeouts>
+
+    <Retries>
+      <MaxAttempts>3</MaxAttempts>
+      <BackoffMultiplier>2</BackoffMultiplier>
+      <InitialDelay>1000</InitialDelay>
+    </Retries>
+  </Configuration>
+
+  <!-- Test Data Configuration -->
+  <TestData>
+    <!-- Test Users -->
+    <Users>
+      <User id="free-tier" email="test-free@validatecall.com" tier="free" password="Test123!">
+        <Limits>
+          <Leads>10</Leads>
+          <Calls>5</Calls>
+          <CallDuration>120</CallDuration><!-- seconds -->
+        </Limits>
+      </User>
+      <User id="lite-sub" email="test-lite@validatecall.com" tier="lite" password="Test123!">
+        <Subscription>
+          <Plan>Lite</Plan>
+          <Price>197</Price>
+          <CallLimit>100</CallLimit>
+        </Subscription>
+      </User>
+      <User id="starter-sub" email="test-starter@validatecall.com" tier="starter" password="Test123!">
+        <Subscription>
+          <Plan>Starter</Plan>
+          <Price>497</Price>
+          <CallLimit>500</CallLimit>
+        </Subscription>
+      </User>
+      <User id="pro-sub" email="test-pro@validatecall.com" tier="pro" password="Test123!">
+        <Subscription>
+          <Plan>Pro</Plan>
+          <Price>1337</Price>
+          <CallLimit>2000</CallLimit>
+        </Subscription>
+      </User>
+    </Users>
+
+    <!-- Stripe Test Cards -->
+    <TestCards>
+      <Card type="success" number="4242424242424242" cvc="123" exp="12/25">Visa - Successful payment</Card>
+      <Card type="decline" number="4000000000000002" cvc="123" exp="12/25">Visa - Card declined</Card>
+      <Card type="insufficient" number="4000000000009995" cvc="123" exp="12/25">Visa - Insufficient funds</Card>
+      <Card type="3dsecure" number="4000002500003155" cvc="123" exp="12/25">Visa - 3D Secure required</Card>
+    </TestCards>
+
+    <!-- Sample Data Files -->
+    <SampleData>
+      <Leads file="test-data/sample-leads-50.csv" format="csv" count="50" />
+      <LeadsJSON file="test-data/sample-leads.json" format="json" count="20" />
+      <InvalidLeads file="test-data/sample-leads-invalid.csv" format="csv" />
+    </SampleData>
+
+    <!-- Test Phone Numbers -->
+    <TestPhoneNumbers>
+      <Phone id="valid" number="+353-1-555-0001" description="Valid Irish number" />
+      <Phone id="invalid" number="123456" description="Invalid format" />
+      <Phone id="voicemail" number="+353-1-555-9999" description="Goes to voicemail" />
+    </TestPhoneNumbers>
+  </TestData>
+
+  <!-- Test Groups organized by feature area -->
+  <TestGroups>
+    <!-- Authentication & Authorization (8 tests) -->
+    <TestGroup
+      name="Authentication"
+      priority="critical"
+      tags="smoke,auth,security"
+      file="tests/auth-tests.xml"
+      testCount="8"
+      description="Verify authentication flows, session management, and authorization controls">
+      <CriticalTests>AUTH-001, AUTH-002</CriticalTests>
+      <ExecutionOrder>1</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Lead Management (12 tests) -->
+    <TestGroup
+      name="Lead Management"
+      priority="critical"
+      tags="smoke,leads,core-functionality"
+      file="tests/lead-tests.xml"
+      testCount="12"
+      description="Test lead generation, import, filtering, and CRUD operations">
+      <CriticalTests>LEAD-001, LEAD-002, LEAD-012</CriticalTests>
+      <ExecutionOrder>2</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Campaign Management (10 tests) -->
+    <TestGroup
+      name="Campaigns"
+      priority="critical"
+      tags="smoke,campaigns,core-functionality"
+      file="tests/campaign-tests.xml"
+      testCount="10"
+      description="Verify campaign creation, batch calling, and call scheduling">
+      <CriticalTests>CAMP-001, CAMP-004, CAMP-010</CriticalTests>
+      <ExecutionOrder>3</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Voice Agent Configuration (7 tests) -->
+    <TestGroup
+      name="Voice Agents"
+      priority="high"
+      tags="agents,voice,configuration"
+      file="tests/agent-tests.xml"
+      testCount="7"
+      description="Test voice agent creation, customization, and testing">
+      <CriticalTests>AGENT-001, AGENT-006</CriticalTests>
+      <ExecutionOrder>4</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Call Execution & Scheduling (6 tests) -->
+    <TestGroup
+      name="Call Execution"
+      priority="critical"
+      tags="smoke,calls,vapi"
+      file="tests/call-tests.xml"
+      testCount="6"
+      description="Verify call initiation, scheduling, recording, and transcripts">
+      <CriticalTests>CALL-001, CALL-002</CriticalTests>
+      <ExecutionOrder>5</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Billing & Subscriptions (7 tests) -->
+    <TestGroup
+      name="Billing"
+      priority="critical"
+      tags="smoke,billing,stripe,revenue"
+      file="tests/billing-tests.xml"
+      testCount="7"
+      description="Test subscription flows, payment processing, and usage limits">
+      <CriticalTests>BILL-001, BILL-002, BILL-003, BILL-004</CriticalTests>
+      <ExecutionOrder>6</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Dashboard & Analytics (3 tests) -->
+    <TestGroup
+      name="Dashboard"
+      priority="high"
+      tags="dashboard,analytics"
+      file="tests/dashboard-tests.xml"
+      testCount="3"
+      description="Verify dashboard statistics and recent activity displays">
+      <CriticalTests>DASH-001</CriticalTests>
+      <ExecutionOrder>7</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Call History & Analytics (3 tests) -->
+    <TestGroup
+      name="History"
+      priority="high"
+      tags="history,reporting"
+      file="tests/history-tests.xml"
+      testCount="3"
+      description="Test call history display, recording playback, and AI summaries">
+      <CriticalTests>HIST-001, HIST-002</CriticalTests>
+      <ExecutionOrder>8</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Integration Testing (4 tests) -->
+    <TestGroup
+      name="Integrations"
+      priority="critical"
+      tags="smoke,integration,api,third-party"
+      file="tests/integration-tests.xml"
+      testCount="4"
+      description="Verify integrations with Claude AI, Vapi, Stripe, and Supabase">
+      <CriticalTests>INTEG-002, INTEG-004</CriticalTests>
+      <ExecutionOrder>9</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Error Handling & Edge Cases (4 tests) -->
+    <TestGroup
+      name="Error Handling"
+      priority="high"
+      tags="errors,edge-cases,resilience"
+      file="tests/error-tests.xml"
+      testCount="4"
+      description="Test error handling, validation, and graceful degradation">
+      <CriticalTests>ERROR-001, ERROR-004</CriticalTests>
+      <ExecutionOrder>10</ExecutionOrder>
+    </TestGroup>
+
+    <!-- Security (7 tests) -->
+    <TestGroup
+      name="Security"
+      priority="critical"
+      tags="smoke,security,auth"
+      file="tests/security-tests.xml"
+      testCount="7"
+      description="Verify security controls, webhook verification, multi-tenant isolation, and RLS enforcement">
+      <CriticalTests>SEC-001, SEC-002, SEC-005, SEC-006</CriticalTests>
+      <ExecutionOrder>11</ExecutionOrder>
+    </TestGroup>
+  </TestGroups>
+
+  <!-- Test Execution Strategies -->
+  <ExecutionStrategies>
+    <!-- Smoke Tests - Critical happy paths (22 tests) -->
+    <Strategy name="smoke" description="Critical happy path tests - run before deployment">
+      <IncludeTags>smoke</IncludeTags>
+      <EstimatedDuration>18min</EstimatedDuration>
+      <Tests>
+        AUTH-001, AUTH-002,
+        LEAD-001, LEAD-002, LEAD-012,
+        CAMP-001, CAMP-004, CAMP-010,
+        AGENT-001, AGENT-006,
+        CALL-001,
+        BILL-001, BILL-002, BILL-003, BILL-004,
+        INTEG-002, INTEG-004,
+        SEC-001, SEC-002, SEC-005, SEC-006
+      </Tests>
+    </Strategy>
+
+    <!-- Regression Tests - All tests (71 tests) -->
+    <Strategy name="regression" description="Full regression test suite">
+      <IncludeAll>true</IncludeAll>
+      <EstimatedDuration>75min</EstimatedDuration>
+    </Strategy>
+
+    <!-- Critical Path - Revenue-impacting flows -->
+    <Strategy name="critical-path" description="Revenue and data-critical tests">
+      <IncludePriority>critical</IncludePriority>
+      <EstimatedDuration>30min</EstimatedDuration>
+    </Strategy>
+
+    <!-- Integration Tests - External API verification -->
+    <Strategy name="integration" description="Third-party API integration tests">
+      <IncludeTags>integration</IncludeTags>
+      <EstimatedDuration>10min</EstimatedDuration>
+    </Strategy>
+  </ExecutionStrategies>
+
+  <!-- Reporting Configuration -->
+  <Reporting>
+    <OutputFormats>
+      <Format type="xml" file="results/test-results.xml" />
+      <Format type="json" file="results/test-results.json" />
+      <Format type="html" file="results/test-report.html" />
+      <Format type="junit" file="results/junit.xml" />
+    </OutputFormats>
+
+    <Screenshots>
+      <OnFailure>true</OnFailure>
+      <OnSuccess>false</OnSuccess>
+      <Directory>results/screenshots</Directory>
+    </Screenshots>
+
+    <Videos>
+      <Enabled>true</Enabled>
+      <OnFailureOnly>true</OnFailureOnly>
+      <Directory>results/videos</Directory>
+    </Videos>
+  </Reporting>
+
+  <!-- CI/CD Integration -->
+  <CIIntegration>
+    <PreCommit>
+      <RunStrategy>smoke</RunStrategy>
+      <FailOnError>true</FailOnError>
+    </PreCommit>
+
+    <PullRequest>
+      <RunStrategy>regression</RunStrategy>
+      <FailOnError>true</FailOnError>
+      <RequireReview>true</RequireReview>
+    </PullRequest>
+
+    <Deployment>
+      <Staging>
+        <RunStrategy>regression</RunStrategy>
+        <FailOnError>true</FailOnError>
+      </Staging>
+      <Production>
+        <RunStrategy>smoke</RunStrategy>
+        <FailOnError>true</FailOnError>
+      </Production>
+    </Deployment>
+  </CIIntegration>
+
+</TestSuite>

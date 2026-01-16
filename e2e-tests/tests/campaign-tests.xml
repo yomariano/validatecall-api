@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Campaign Management Test Suite
+  Tests campaign creation, batch calling, scheduling, and usage limits
+
+  Test Count: 10
+  Priority: Critical
+  Tags: smoke, campaigns, core-functionality
+-->
+<TestGroup name="Campaigns" priority="critical" tags="smoke,campaigns,core-functionality">
+
+  <TestCase id="CAMP-001" name="Create Campaign - Happy Path" priority="critical" tags="smoke,campaigns">
+    <Description>Successfully create and save a calling campaign with leads</Description>
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>At least 10 leads available</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/campaigns">Navigate to Campaigns page</Step>
+      <Step id="2" action="input" target="input[name='campaign-name']" value="Q1 Dentist Outreach">Enter campaign name</Step>
+      <Step id="3" action="input" target="textarea[name='product-idea']" value="AI dental appointment reminder system">Enter product idea</Step>
+      <Step id="4" action="select-leads" count="10">Select 10 leads from list</Step>
+      <Step id="5" action="click" target="button[data-testid='save-campaign']">Click Save Campaign</Step>
+      <Step id="6" action="wait" condition="element-contains-text" selector=".alert-success" value="saved" timeout="10000">Wait for success message</Step>
+      <Step id="7" action="assert" type="element-contains-text" selector=".alert-success" expected="Campaign saved">Verify success message</Step>
+      <Step id="8" action="navigate" target="/campaigns">Navigate back to campaigns</Step>
+      <Step id="9" action="assert" type="element-contains-text" selector=".campaign-list" expected="Q1 Dentist Outreach">Verify campaign appears in list</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Campaign saved successfully</Result>
+      <Result>Success message displayed</Result>
+      <Result>Campaign appears in "Past Campaigns"</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="text-contains" selector=".alert-success" expected="saved" />
+      <Assert type="element-contains-text" selector=".campaign-list" expected="Q1 Dentist Outreach" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-002" name="Campaign with Pre-configured Voice Agent" priority="high" tags="campaigns,agents">
+    <Description>Create campaign using existing voice agent configuration</Description>
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Voice agent already created</Precondition>
+      <Precondition>At least 5 leads available</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="create-voice-agent" name="Friendly Sales Agent">Create voice agent first</Step>
+      <Step id="2" action="navigate" target="/campaigns">Navigate to Campaigns</Step>
+      <Step id="3" action="select" target="select[name='voice-agent']" value="Friendly Sales Agent">Select agent from dropdown</Step>
+      <Step id="4" action="input" target="textarea[name='product-idea']" value="Dental AI system">Enter product idea</Step>
+      <Step id="5" action="select-leads" count="5">Select 5 leads</Step>
+      <Step id="6" action="click" target="button[data-testid='save-campaign']">Save campaign</Step>
+      <Step id="7" action="assert" type="text-contains" selector=".alert-success" expected="saved">Verify campaign saved</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Campaign uses selected agent's voice/settings</Result>
+      <Result>Campaign saved successfully</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="text-contains" selector=".alert-success" expected="saved" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-003" name="Campaign with Default Agent" priority="medium" tags="campaigns">
+    <Description>Campaign creation without pre-configured agent (dynamic agent from pitch)</Description>
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>No voice agents created</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/campaigns">Navigate to Campaigns</Step>
+      <Step id="2" action="select" target="select[name='voice-agent']" value="Use default agent">Leave as default</Step>
+      <Step id="3" action="input" target="textarea[name='product-idea']" value="AI appointment system">Enter pitch</Step>
+      <Step id="4" action="select-leads" count="3">Select leads</Step>
+      <Step id="5" action="click" target="button[data-testid='save-campaign']">Save</Step>
+      <Step id="6" action="assert" type="text-contains" selector=".alert-success" expected="saved">Verify saved</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Campaign creates dynamic agent from pitch text</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="text-contains" selector=".alert-success" expected="saved" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-004" name="Batch Call Execution - All Leads" priority="critical" tags="smoke,campaigns,calls">
+    <Description>Initiate calls to all leads in campaign and track progress</Description>
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Campaign with 5 leads exists</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="create-campaign" leads="5">Create campaign with 5 leads</Step>
+      <Step id="2" action="click" target="button[data-testid='call-all']">Click "Call All"</Step>
+      <Step id="3" action="wait" condition="element-visible" selector=".call-progress" timeout="5000">Wait for progress indicator</Step>
+      <Step id="4" action="assert" type="element-exists" selector=".call-progress">Verify progress tracking</Step>
+      <Step id="5" action="wait" condition="element-contains-text" selector=".status-message" value="completed" timeout="60000">Wait for completion</Step>
+      <Step id="6" action="assert" type="element-contains-text" selector=".status-message" expected="5 calls initiated">Verify all calls initiated</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>5 calls initiated sequentially</Result>
+      <Result>Status updated for each call</Result>
+      <Result>Call results tracked</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="element-contains-text" selector=".status-message" expected="5 calls" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-005" name="Single Lead Call from Campaign" priority="high" tags="campaigns,calls">
+    <Description>Call individual lead within campaign</Description>
+    <Preconditions>
+      <Precondition>Campaign with 10 leads exists</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="create-campaign" leads="10">Create campaign</Step>
+      <Step id="2" action="click" target="table tbody tr:nth-child(3) button[data-testid='call-single']">Click call on 3rd lead</Step>
+      <Step id="3" action="wait" condition="element-contains-text" selector=".alert-success" value="initiated" timeout="10000">Wait for confirmation</Step>
+      <Step id="4" action="assert" type="element-attribute" selector="table tbody tr:nth-child(3) td.status" attribute="data-status" value="called">Verify lead marked as called</Step>
+      <Step id="5" action="assert" type="element-attribute" selector="table tbody tr:nth-child(4) td.status" attribute="data-status" value="pending">Verify other leads still pending</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Single call initiated</Result>
+      <Result>Lead marked as "Called"</Result>
+      <Result>Other leads remain pending</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="element-attribute" selector="table tbody tr:nth-child(3) td.status" attribute="data-status" value="called" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-006" name="Campaign Call Progress Tracking" priority="medium" tags="campaigns,ui">
+    <Description>Monitor real-time call progress during batch calling</Description>
+    <Preconditions>
+      <Precondition>Campaign with 10 leads ready</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="start-batch-call" leads="10">Start batch call</Step>
+      <Step id="2" action="assert" type="element-exists" selector=".progress-bar">Verify progress bar visible</Step>
+      <Step id="3" action="wait" condition="element-attribute-changes" selector=".progress-bar" attribute="aria-valuenow" timeout="30000">Watch progress update</Step>
+      <Step id="4" action="assert" type="element-contains-text" selector=".progress-text" expected="3/10">Verify current/total count</Step>
+      <Step id="5" action="wait" condition="element-contains-text" selector=".progress-text" value="10/10" timeout="60000">Wait for completion</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Progress bar updates</Result>
+      <Result>Results show "Initiated" or "Failed" per lead</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="element-exists" selector=".progress-bar" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-007" name="Resume Saved Campaign" priority="medium" tags="campaigns,state">
+    <Description>Load and continue existing campaign</Description>
+    <Preconditions>
+      <Precondition>Partially completed campaign exists</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/campaigns">Navigate to Campaigns</Step>
+      <Step id="2" action="click" target="button[data-campaign-id='123'][data-action='resume']">Click Resume on campaign</Step>
+      <Step id="3" action="wait" condition="url-contains" value="/campaigns/123" timeout="3000">Wait for campaign to load</Step>
+      <Step id="4" action="assert" type="element-attribute" selector="table tbody tr.called" count="5">Verify 5 leads already called</Step>
+      <Step id="5" action="assert" type="element-attribute" selector="table tbody tr.pending" count="5">Verify 5 leads pending</Step>
+      <Step id="6" action="click" target="button[data-testid='call-remaining']">Call remaining leads</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Campaign loads with correct state</Result>
+      <Result>Only uncalled leads available</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="element-count" selector="table tbody tr.called" expected="5" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-008" name="Campaign with Scheduled Calls" priority="high" tags="campaigns,scheduling">
+    <Description>Schedule campaign calls for future time</Description>
+    <Preconditions>
+      <Precondition>Campaign created</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="create-campaign" leads="3">Create campaign</Step>
+      <Step id="2" action="click" target="button[data-testid='call-all']">Click Call All</Step>
+      <Step id="3" action="click" target="button[data-tab='schedule']">Switch to Schedule tab</Step>
+      <Step id="4" action="input" target="input[type='datetime-local']" value="+2hours">Select time 2 hours future</Step>
+      <Step id="5" action="click" target="button[data-testid='schedule-call']">Click Schedule Call</Step>
+      <Step id="6" action="wait" condition="element-contains-text" selector=".alert-success" value="scheduled" timeout="5000">Wait for confirmation</Step>
+      <Step id="7" action="navigate" target="/history">Navigate to History</Step>
+      <Step id="8" action="assert" type="element-exists" selector="table tbody tr[data-status='scheduled']">Verify calls appear as scheduled</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Calls scheduled for future time</Result>
+      <Result>Appear in scheduled calls queue</Result>
+      <Result>Execute at scheduled time</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="text-contains" selector=".alert-success" expected="scheduled" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-009" name="Campaign Category Filtering" priority="medium" tags="campaigns,filtering">
+    <Description>Filter campaign leads by industry category</Description>
+    <Preconditions>
+      <Precondition>Campaign with 50 mixed-industry leads</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="create-campaign" leads="50">Create campaign with mixed leads</Step>
+      <Step id="2" action="select" target="select[name='category-filter']" value="Healthcare - Dental">Filter by dental</Step>
+      <Step id="3" action="wait" condition="element-stable" selector="table tbody" timeout="2000">Wait for filter</Step>
+      <Step id="4" action="assert" type="element-contains-text" selector="table tbody tr:first-child td.category" expected="Healthcare - Dental">Verify only dental shown</Step>
+      <Step id="5" action="assert" type="element-count" selector="table tbody tr" min="1" max="10">Verify pagination adjusts</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Only dental leads shown</Result>
+      <Result>Pagination adjusts</Result>
+      <Result>Selection maintained</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="element-contains-text" selector="table tbody tr td.category" expected="Healthcare - Dental" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="CAMP-010" name="Free Tier Call Limit Enforcement" priority="critical" tags="smoke,campaigns,billing,limits">
+    <Description>Prevent free tier users from exceeding 5 calls</Description>
+    <Preconditions>
+      <Precondition>User logged in as free tier</Precondition>
+      <Precondition>3 calls already used (3/5)</Precondition>
+    </Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/campaigns">Navigate to Campaigns</Step>
+      <Step id="2" action="assert" type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="3/5">Verify 3/5 calls used</Step>
+      <Step id="3" action="create-campaign" leads="5">Create campaign with 5 leads</Step>
+      <Step id="4" action="click" target="button[data-testid='call-all']">Attempt to call all 5</Step>
+      <Step id="5" action="wait" condition="element-visible" selector="[data-testid='call-limit-warning']" timeout="3000">Soft paywall appears</Step>
+      <Step id="6" action="click" target="button[data-testid='continue']">Continue calling</Step>
+      <Step id="7" action="wait" condition="element-contains-text" selector=".status-message" value="2 calls initiated" timeout="30000">Only 2 calls complete</Step>
+      <Step id="8" action="assert" type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="5/5">Verify 5/5 limit reached</Step>
+      <Step id="9" action="wait" condition="element-visible" selector="[data-testid='hard-paywall']" timeout="2000">Hard paywall blocks remaining</Step>
+      <Step id="10" action="assert" type="element-contains-text" selector="[data-testid='hard-paywall']" expected="Call limit reached">Verify hard paywall message</Step>
+    </Steps>
+    <ExpectedResults>
+      <Result>Only 2 calls complete (3+2=5 total)</Result>
+      <Result>Hard paywall blocks remaining 3</Result>
+      <Result>Usage meter shows 5/5</Result>
+    </ExpectedResults>
+    <Assertions>
+      <Assert type="element-contains-text" selector="[data-testid='usage-meter-calls']" expected="5/5" />
+      <Assert type="element-exists" selector="[data-testid='hard-paywall']" />
+    </Assertions>
+  </TestCase>
+
+</TestGroup>

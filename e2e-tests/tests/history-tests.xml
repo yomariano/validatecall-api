@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestGroup name="History" priority="high" tags="history,reporting">
+  <TestCase id="HIST-001" name="Call History List View" priority="high" tags="history,calls">
+    <Description>Display all past calls with filters</Description>
+    <Preconditions><Precondition>Multiple calls exist</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/history">Navigate to History</Step>
+      <Step id="2" action="assert" type="element-exists" selector="table">Verify table displayed</Step>
+      <Step id="3" action="assert" type="element-count" selector="table tbody tr" min="1">Verify calls listed</Step>
+      <Step id="4" action="click" target="button[data-source='vapi']">Switch to "From Vapi" source</Step>
+      <Step id="5" action="wait" condition="element-stable" selector="table" timeout="2000">Wait for reload</Step>
+      <Step id="6" action="click" target="button[data-source='database']">Switch to "From Database"</Step>
+    </Steps>
+    <ExpectedResults><Result>Calls load from both sources</Result><Result>Sortable, paginated</Result></ExpectedResults>
+    <Assertions><Assert type="element-exists" selector="table" /></Assertions>
+  </TestCase>
+  <TestCase id="HIST-002" name="Call Detail Modal - Recording Playback" priority="high" tags="history,recording">
+    <Description>View full call details with audio</Description>
+    <Preconditions><Precondition>Completed call with recording</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/history">Navigate to History</Step>
+      <Step id="2" action="click" target="table tbody tr:first-child button[data-testid='view-call']">Click View</Step>
+      <Step id="3" action="wait" condition="element-visible" selector="[data-testid='call-detail-modal']" timeout="3000">Wait for modal</Step>
+      <Step id="4" action="assert" type="element-exists" selector="audio">Verify audio player</Step>
+      <Step id="5" action="click" target="audio button.play">Play recording</Step>
+      <Step id="6" action="assert" type="element-exists" selector="[data-testid='ai-summary']">Verify AI summary present</Step>
+      <Step id="7" action="assert" type="element-exists" selector="[data-testid='transcript']">Verify transcript present</Step>
+    </Steps>
+    <ExpectedResults><Result>Modal shows all call data</Result><Result>Audio plays</Result><Result>Transcript formatted with speaker labels</Result></ExpectedResults>
+    <Assertions><Assert type="element-exists" selector="audio" /></Assertions>
+  </TestCase>
+  <TestCase id="HIST-003" name="AI Call Summary Generation" priority="medium" tags="history,ai">
+    <Description>Verify AI-generated call summary present</Description>
+    <Preconditions><Precondition>Call with meaningful conversation</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="complete-call">Complete call with conversation</Step>
+      <Step id="2" action="navigate" target="/history">Navigate to History</Step>
+      <Step id="3" action="click" target="table tbody tr:first-child button[data-testid='view-call']">Click View</Step>
+      <Step id="4" action="wait" condition="element-visible" selector="[data-testid='ai-summary']" timeout="3000">Wait for summary</Step>
+      <Step id="5" action="assert" type="element-value-length" selector="[data-testid='ai-summary']" min="50">Verify summary has content (50+ chars)</Step>
+    </Steps>
+    <ExpectedResults><Result>Concise 2-3 sentence summary of call outcome</Result></ExpectedResults>
+    <Assertions><Assert type="element-value-length" selector="[data-testid='ai-summary']" min="50" /></Assertions>
+  </TestCase>
+</TestGroup>

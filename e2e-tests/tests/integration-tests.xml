@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestGroup name="Integrations" priority="critical" tags="smoke,integration,api,third-party">
+  <TestCase id="INTEG-001" name="Claude AI Lead Classification" priority="high" tags="integration,claude,ai">
+    <Description>Verify Claude API classifies lead industries</Description>
+    <Preconditions><Precondition>Claude API configured</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="scrape-leads" keyword="mixed" location="Dublin" maxResults="50">Scrape mixed leads</Step>
+      <Step id="2" action="wait" condition="api-call-completed" endpoint="/api/claude/classify" timeout="60000">Wait for classification</Step>
+      <Step id="3" action="api-call" endpoint="/api/supabase/leads" method="GET">Fetch leads from DB</Step>
+      <Step id="4" action="assert" type="api-response-field" field="data[0].category" exists="true">Verify categories stored</Step>
+      <Step id="5" action="assert" type="api-response-field" field="data[0].category" pattern="[A-Z].*-.*">Verify standardized format</Step>
+    </Steps>
+    <ExpectedResults><Result>Claude returns standardized industry labels</Result><Result>Stored correctly in database</Result></ExpectedResults>
+    <Assertions><Assert type="api-response-field" field="data[0].category" exists="true" /></Assertions>
+  </TestCase>
+  <TestCase id="INTEG-002" name="Vapi Voice Call Integration" priority="critical" tags="smoke,integration,vapi">
+    <Description>Verify Vapi API initiates calls successfully</Description>
+    <Preconditions><Precondition>Vapi API configured</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="initiate-call" phone="+353-1-555-0001">Initiate call from campaign</Step>
+      <Step id="2" action="assert" type="api-call" endpoint="/api/vapi/call" status="200">Verify Vapi API request</Step>
+      <Step id="3" action="assert" type="api-response-field" field="call_id" exists="true">Verify call ID returned</Step>
+      <Step id="4" action="wait" duration="5000">Wait for webhook</Step>
+      <Step id="5" action="api-call" endpoint="/api/supabase/calls" method="GET" params="?order=created_at.desc&limit=1">Check call record</Step>
+      <Step id="6" action="assert" type="api-response-field" field="data[0].vapi_call_id" exists="true">Verify webhook updated record</Step>
+    </Steps>
+    <ExpectedResults><Result>Vapi call initiated</Result><Result>Webhooks fire for status updates</Result></ExpectedResults>
+    <Assertions><Assert type="api-call" endpoint="/api/vapi/call" status="200" /></Assertions>
+  </TestCase>
+  <TestCase id="INTEG-003" name="Supabase Data Persistence" priority="high" tags="integration,database">
+    <Description>Verify all entities saved to Supabase</Description>
+    <Preconditions><Precondition>Supabase configured</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="create-lead" name="Test Lead">Create lead</Step>
+      <Step id="2" action="create-campaign" name="Test Campaign">Create campaign</Step>
+      <Step id="3" action="initiate-call">Make call</Step>
+      <Step id="4" action="api-call" endpoint="/api/supabase/leads" method="GET">Query leads table</Step>
+      <Step id="5" action="assert" type="api-response-field" field="data[0].name" expected="Test Lead">Verify lead persisted</Step>
+      <Step id="6" action="api-call" endpoint="/api/supabase/campaigns" method="GET">Query campaigns table</Step>
+      <Step id="7" action="assert" type="api-response-field" field="data[0].name" expected="Test Campaign">Verify campaign persisted</Step>
+      <Step id="8" action="api-call" endpoint="/api/supabase/calls" method="GET">Query calls table</Step>
+      <Step id="9" action="assert" type="api-response-count" min="1">Verify call persisted</Step>
+    </Steps>
+    <ExpectedResults><Result>Data persists correctly</Result><Result>Relationships maintained</Result></ExpectedResults>
+    <Assertions><Assert type="api-response-count" min="1" /></Assertions>
+  </TestCase>
+  <TestCase id="INTEG-004" name="Stripe Webhook Processing" priority="critical" tags="smoke,integration,stripe,revenue">
+    <Description>Handle Stripe subscription webhooks</Description>
+    <Preconditions><Precondition>Stripe webhooks configured</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="subscribe" plan="Lite">Subscribe to plan via Stripe</Step>
+      <Step id="2" action="wait" duration="3000">Wait for webhook processing</Step>
+      <Step id="3" action="api-call" endpoint="/api/supabase/user-subscriptions" method="GET">Check subscription record</Step>
+      <Step id="4" action="assert" type="api-response-field" field="data[0].plan" expected="Lite">Verify subscription created</Step>
+      <Step id="5" action="api-call" endpoint="/api/supabase/free-tier-usage" method="GET">Check usage limits</Step>
+      <Step id="6" action="assert" type="api-response-field" field="data[0].calls_limit" expected="100">Verify limits updated</Step>
+    </Steps>
+    <ExpectedResults><Result>Webhook processed</Result><Result>Subscription activated</Result><Result>Limits applied</Result></ExpectedResults>
+    <Assertions><Assert type="api-response-field" field="data[0].plan" expected="Lite" /></Assertions>
+  </TestCase>
+</TestGroup>

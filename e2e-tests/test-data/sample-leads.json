@@ -1,0 +1,162 @@
+[
+  {
+    "name": "Bright Smile Dental",
+    "phone": "+353-1-555-0001",
+    "email": "info@brightsmile.ie",
+    "address": "123 Main St",
+    "city": "Dublin",
+    "category": "Healthcare - Dental"
+  },
+  {
+    "name": "O'Connor's Restaurant",
+    "phone": "+353-1-555-0002",
+    "email": "hello@oconnors.ie",
+    "address": "45 Temple Bar",
+    "city": "Dublin",
+    "category": "Food & Beverage - Restaurant"
+  },
+  {
+    "name": "QuickFix Plumbing",
+    "phone": "+353-21-555-0003",
+    "email": "contact@quickfix.ie",
+    "address": "78 Patrick St",
+    "city": "Cork",
+    "category": "Home Services - Plumbing"
+  },
+  {
+    "name": "TechStart Solutions",
+    "phone": "+353-1-555-0004",
+    "email": "hello@techstart.ie",
+    "address": "90 Silicon Docks",
+    "city": "Dublin",
+    "category": "Technology - Software"
+  },
+  {
+    "name": "Green Thumb Landscaping",
+    "phone": "+353-91-555-0005",
+    "email": "info@greenthumb.ie",
+    "address": "12 Garden Row",
+    "city": "Galway",
+    "category": "Home Services - Landscaping"
+  },
+  {
+    "name": "City Gym & Fitness",
+    "phone": "+353-1-555-0006",
+    "email": "join@citygym.ie",
+    "address": "34 Fitness Ave",
+    "city": "Dublin",
+    "category": "Health & Fitness - Gym"
+  },
+  {
+    "name": "McCarthy Legal Services",
+    "phone": "+353-21-555-0007",
+    "email": "contact@mccarthylaw.ie",
+    "address": "56 Court St",
+    "city": "Cork",
+    "category": "Professional Services - Legal"
+  },
+  {
+    "name": "Bella Vista Boutique",
+    "phone": "+353-1-555-0008",
+    "email": "shop@bellavista.ie",
+    "address": "78 Fashion St",
+    "city": "Dublin",
+    "category": "Retail - Fashion"
+  },
+  {
+    "name": "Dublin Auto Repair",
+    "phone": "+353-1-555-0009",
+    "email": "service@dublinauto.ie",
+    "address": "90 Motor Way",
+    "city": "Dublin",
+    "category": "Automotive - Repair"
+  },
+  {
+    "name": "Fresh Bites Cafe",
+    "phone": "+353-91-555-0010",
+    "email": "hello@freshbites.ie",
+    "address": "12 Cafe Lane",
+    "city": "Galway",
+    "category": "Food & Beverage - Cafe"
+  },
+  {
+    "name": "Ryan Accounting Firm",
+    "phone": "+353-1-555-0011",
+    "email": "info@ryanaccounting.ie",
+    "address": "34 Numbers St",
+    "city": "Dublin",
+    "category": "Professional Services - Accounting"
+  },
+  {
+    "name": "Emerald Photography",
+    "phone": "+353-21-555-0012",
+    "email": "book@emeraldphoto.ie",
+    "address": "56 Camera Rd",
+    "city": "Cork",
+    "category": "Creative Services - Photography"
+  },
+  {
+    "name": "Pet Paradise Veterinary",
+    "phone": "+353-1-555-0013",
+    "email": "care@petparadise.ie",
+    "address": "78 Animal Ave",
+    "city": "Dublin",
+    "category": "Healthcare - Veterinary"
+  },
+  {
+    "name": "Digital Marketing Pro",
+    "phone": "+353-1-555-0014",
+    "email": "hello@digitalmarketpro.ie",
+    "address": "90 Ad Lane",
+    "city": "Dublin",
+    "category": "Professional Services - Marketing"
+  },
+  {
+    "name": "Cozy Home Interiors",
+    "phone": "+353-91-555-0015",
+    "email": "design@cozyhome.ie",
+    "address": "12 Design St",
+    "city": "Galway",
+    "category": "Home Services - Interior Design"
+  },
+  {
+    "name": "Murphy Insurance Agency",
+    "phone": "+353-1-555-0016",
+    "email": "quotes@murphyinsurance.ie",
+    "address": "34 Cover St",
+    "city": "Dublin",
+    "category": "Financial Services - Insurance"
+  },
+  {
+    "name": "Sunshine Daycare Center",
+    "phone": "+353-21-555-0017",
+    "email": "enroll@sunshinedaycare.ie",
+    "address": "56 Kids Ave",
+    "city": "Cork",
+    "category": "Education - Childcare"
+  },
+  {
+    "name": "Celtic Print Shop",
+    "phone": "+353-1-555-0018",
+    "email": "orders@celticprint.ie",
+    "address": "78 Print Way",
+    "city": "Dublin",
+    "category": "Professional Services - Printing"
+  },
+  {
+    "name": "Peak Performance Physiotherapy",
+    "phone": "+353-1-555-0019",
+    "email": "appointments@peakphysio.ie",
+    "address": "90 Health Rd",
+    "city": "Dublin",
+    "category": "Healthcare - Physiotherapy"
+  },
+  {
+    "name": "Artisan Bakery & Cafe",
+    "phone": "+353-91-555-0020",
+    "email": "hello@artisanbakery.ie",
+    "address": "12 Flour St",
+    "city": "Galway",
+    "category": "Food & Beverage - Bakery"
+  }
+]

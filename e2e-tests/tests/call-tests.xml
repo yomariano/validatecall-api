@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Call Execution & Scheduling Test Suite
+  Tests call initiation, scheduling, recording, transcripts, and duration tracking
+
+  Test Count: 6
+  Priority: Critical
+  Tags: smoke, calls, vapi
+-->
+<TestGroup name="Call Execution" priority="critical" tags="smoke,calls,vapi">
+
+  <TestCase id="CALL-001" name="Immediate Call Initiation" priority="critical" tags="smoke,calls,vapi">
+    <Description>Make immediate call to single lead via Vapi</Description>
+    <Preconditions><Precondition>User logged in</Precondition><Precondition>Lead exists</Precondition><Precondition>Vapi API configured</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">Navigate to Leads</Step>
+      <Step id="2" action="click" target="table tbody tr:first-child button[data-testid='call-lead']">Click Call icon</Step>
+      <Step id="3" action="input" target="textarea[name='product-pitch']" value="AI appointment system">Enter pitch</Step>
+      <Step id="4" action="click" target="button[data-tab='call-now']">Click Call Now tab</Step>
+      <Step id="5" action="click" target="button[data-testid='start-call']">Click Start Call</Step>
+      <Step id="6" action="wait" condition="element-contains-text" selector=".alert-success" value="initiated" timeout="10000">Wait for confirmation</Step>
+      <Step id="7" action="assert" type="api-call" endpoint="/api/vapi/call" status="200">Verify Vapi API called</Step>
+      <Step id="8" action="assert" type="api-response-field" field="call_id" exists="true">Verify call ID returned</Step>
+    </Steps>
+    <ExpectedResults><Result>Vapi call initiated immediately</Result><Result>Call ID returned</Result><Result>Status "initiated"</Result></ExpectedResults>
+    <Assertions><Assert type="api-call" endpoint="/api/vapi/call" status="200" /><Assert type="api-response-field" field="call_id" exists="true" /></Assertions>
+  </TestCase>
+
+  <TestCase id="CALL-002" name="Scheduled Call - Future Time" priority="high" tags="calls,scheduling">
+    <Description>Schedule call for specific future time</Description>
+    <Preconditions><Precondition>User logged in</Precondition><Precondition>Lead exists</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">Navigate to Leads</Step>
+      <Step id="2" action="click" target="table tbody tr:first-child button[data-testid='call-lead']">Click Call</Step>
+      <Step id="3" action="click" target="button[data-tab='schedule']">Click Schedule tab</Step>
+      <Step id="4" action="input" target="input[type='datetime-local']" value="+1hour">Select time 1 hour future</Step>
+      <Step id="5" action="input" target="textarea[name='product-pitch']" value="AI system">Enter pitch</Step>
+      <Step id="6" action="click" target="button[data-testid='schedule-call']">Click Schedule Call</Step>
+      <Step id="7" action="wait" condition="element-contains-text" selector=".alert-success" value="scheduled" timeout="5000">Wait for confirmation</Step>
+      <Step id="8" action="api-call" endpoint="/api/supabase/scheduled-calls" method="GET">Verify in database</Step>
+      <Step id="9" action="assert" type="api-response-field" field="data[0].status" expected="scheduled">Verify status scheduled</Step>
+    </Steps>
+    <ExpectedResults><Result>Call scheduled</Result><Result>Appears in history as "scheduled"</Result><Result>Executes at correct time</Result></ExpectedResults>
+    <Assertions><Assert type="text-contains" selector=".alert-success" expected="scheduled" /><Assert type="api-response-field" field="data[0].status" expected="scheduled" /></Assertions>
+  </TestCase>
+
+  <TestCase id="CALL-003" name="Scheduled Call Retry on Failure" priority="high" tags="calls,error-handling">
+    <Description>Verify automatic retry for failed scheduled calls</Description>
+    <Preconditions><Precondition>Scheduled call to invalid number exists</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="schedule-call" phone="123456" time="+5minutes">Schedule call to invalid number</Step>
+      <Step id="2" action="wait" duration="300000">Wait 5 minutes for execution</Step>
+      <Step id="3" action="api-call" endpoint="/api/supabase/calls" method="GET" params="?phone=123456">Check call record</Step>
+      <Step id="4" action="assert" type="api-response-field" field="data[0].retry_count" expected="3">Verify 3 retries attempted</Step>
+      <Step id="5" action="assert" type="api-response-field" field="data[0].status" expected="failed">Verify status failed after 3rd attempt</Step>
+    </Steps>
+    <ExpectedResults><Result>System retries failed call 3 times</Result><Result>Marks as "failed" after 3rd attempt</Result></ExpectedResults>
+    <Assertions><Assert type="api-response-field" field="data[0].retry_count" expected="3" /><Assert type="api-response-field" field="data[0].status" expected="failed" /></Assertions>
+  </TestCase>
+
+  <TestCase id="CALL-004" name="Call Recording Availability" priority="medium" tags="calls,recording">
+    <Description>Verify call recording is captured and accessible</Description>
+    <Preconditions><Precondition>Completed call exists</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="complete-test-call">Complete a test call</Step>
+      <Step id="2" action="navigate" target="/history">Navigate to History</Step>
+      <Step id="3" action="click" target="table tbody tr:first-child button[data-testid='view-call']">Click View on completed call</Step>
+      <Step id="4" action="wait" condition="element-visible" selector="[data-testid='call-detail-modal']" timeout="3000">Wait for modal</Step>
+      <Step id="5" action="assert" type="element-exists" selector="audio[data-testid='call-recording']">Verify audio player present</Step>
+      <Step id="6" action="assert" type="element-attribute" selector="audio" attribute="src" exists="true">Verify recording URL exists</Step>
+    </Steps>
+    <ExpectedResults><Result>Call detail modal shows audio player with recording</Result></ExpectedResults>
+    <Assertions><Assert type="element-exists" selector="audio[data-testid='call-recording']" /><Assert type="element-attribute" selector="audio" attribute="src" exists="true" /></Assertions>
+  </TestCase>
+
+  <TestCase id="CALL-005" name="Call Transcript Generation" priority="medium" tags="calls,transcript">
+    <Description>Verify conversation transcript captured</Description>
+    <Preconditions><Precondition>Completed call with multi-turn conversation</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="complete-test-call" turns="5">Complete call with conversation</Step>
+      <Step id="2" action="navigate" target="/history">Navigate to History</Step>
+      <Step id="3" action="click" target="table tbody tr:first-child button[data-testid='view-call']">Click View</Step>
+      <Step id="4" action="wait" condition="element-visible" selector="[data-testid='transcript-section']" timeout="3000">Wait for modal</Step>
+      <Step id="5" action="assert" type="element-exists" selector="[data-testid='transcript-section']">Verify transcript section present</Step>
+      <Step id="6" action="assert" type="element-count" selector=".transcript-message" min="5">Verify multiple messages</Step>
+      <Step id="7" action="assert" type="element-contains-text" selector=".transcript-message[data-speaker='ai']" expected="AI:">Verify AI label</Step>
+      <Step id="8" action="assert" type="element-contains-text" selector=".transcript-message[data-speaker='customer']" expected="Customer:">Verify Customer label</Step>
+    </Steps>
+    <ExpectedResults><Result>Full conversation transcript with AI/Customer labels</Result></ExpectedResults>
+    <Assertions><Assert type="element-exists" selector="[data-testid='transcript-section']" /><Assert type="element-count" selector=".transcript-message" min="5" /></Assertions>
+  </TestCase>
+
+  <TestCase id="CALL-006" name="Call Duration Tracking" priority="medium" tags="calls,analytics">
+    <Description>Verify accurate call duration measurement</Description>
+    <Preconditions><Precondition>Test call lasting ~90 seconds</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="complete-test-call" duration="90">Make test call lasting 90 seconds</Step>
+      <Step id="2" action="navigate" target="/history">Navigate to History</Step>
+      <Step id="3" action="assert" type="element-contains-text" selector="table tbody tr:first-child td.duration" expected="1:30">Verify duration shows 1:30</Step>
+      <Step id="4" action="api-call" endpoint="/api/supabase/calls" method="GET" params="?order=created_at.desc&limit=1">Fetch latest call</Step>
+      <Step id="5" action="assert" type="api-response-field" field="data[0].duration" min="85" max="95">Verify duration accurate (85-95 seconds)</Step>
+    </Steps>
+    <ExpectedResults><Result>Duration shows "1:30"</Result><Result>Accurate to actual call length</Result></ExpectedResults>
+    <Assertions><Assert type="element-contains-text" selector="table tbody tr:first-child td.duration" expected="1:30" /><Assert type="api-response-field" field="data[0].duration" min="85" max="95" /></Assertions>
+  </TestCase>
+
+</TestGroup>

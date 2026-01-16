@@ -1,0 +1,843 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Lead Management Test Suite
+  Tests lead generation, import, filtering, CRUD operations, and usage limits
+
+  Test Count: 12
+  Priority: Critical
+  Tags: smoke, leads, core-functionality
+-->
+<TestGroup name="Lead Management" priority="critical" tags="smoke,leads,core-functionality">
+
+  <TestCase id="LEAD-001" name="Google Maps Scraping - Happy Path" priority="critical" tags="smoke,leads,scraping">
+    <Description>Successfully scrape leads from Google Maps and verify AI classification</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Claude API configured</Precondition>
+      <Precondition>User has available lead quota (free tier: under 10)</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads page loads</Expected>
+      </Step>
+
+      <Step id="2" action="input" target="input[name='keyword']" value="dentists">
+        <Description>Enter keyword: "dentists"</Description>
+        <Expected>Keyword input filled</Expected>
+      </Step>
+
+      <Step id="3" action="input" target="input[name='location']" value="Dublin, Ireland">
+        <Description>Enter location: "Dublin, Ireland"</Description>
+        <Expected>Location input filled</Expected>
+      </Step>
+
+      <Step id="4" action="select" target="select[name='maxResults']" value="50">
+        <Description>Select max results: 50</Description>
+        <Expected>Dropdown set to 50</Expected>
+      </Step>
+
+      <Step id="5" action="click" target="button[data-testid='start-scrape']">
+        <Description>Click "Start Automated Search" button</Description>
+        <Expected>Scraping initiated</Expected>
+      </Step>
+
+      <Step id="6" action="wait" condition="element-visible" selector=".progress-indicator" timeout="3000">
+        <Description>Wait for progress indicator</Description>
+        <Expected>Progress indicator shows scraping status</Expected>
+      </Step>
+
+      <Step id="7" action="wait" condition="element-contains-text" selector=".status-message" value="Classifying industries" timeout="60000">
+        <Description>Wait for AI classification phase</Description>
+        <Expected>Status shows "Classifying industries..."</Expected>
+      </Step>
+
+      <Step id="8" action="wait" condition="element-contains-text" selector=".alert-success" value="Saved" timeout="120000">
+        <Description>Wait for scraping completion</Description>
+        <Expected>Success message appears</Expected>
+      </Step>
+
+      <Step id="9" action="assert" type="element-count" selector="table tbody tr" min="40" max="50">
+        <Description>Verify leads displayed in table</Description>
+        <Expected>Between 40-50 leads scraped</Expected>
+      </Step>
+
+      <Step id="10" action="assert" type="element-contains-text" selector="table tbody tr:first-child td:nth-child(2)">
+        <Description>Verify first lead has phone number</Description>
+        <Expected>Phone number format: +353-X-XXX-XXXX</Expected>
+      </Step>
+
+      <Step id="11" action="assert" type="element-exists" selector="table tbody tr:first-child td:nth-child(5)">
+        <Description>Verify leads have category field</Description>
+        <Expected>Category column populated (e.g., "Healthcare - Dental")</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>50 leads scraped successfully</Result>
+      <Result>Each lead has: name, phone, address, category</Result>
+      <Result>Claude AI classifies leads into standardized industries</Result>
+      <Result>Leads appear in table with all fields</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="element-count" selector="table tbody tr" min="40" max="50" />
+      <Assert type="text-contains" selector=".alert-success" expected="Saved" />
+      <Assert type="api-call" endpoint="/api/claude/scrape" status="200" />
+      <Assert type="api-call" endpoint="/api/claude/classify" status="200" />
+    </Assertions>
+
+    <Cleanup>
+      <Action>Delete scraped leads</Action>
+    </Cleanup>
+  </TestCase>
+
+  <TestCase id="LEAD-002" name="Lead Scraping with AI Industry Classification" priority="critical" tags="leads,ai,claude">
+    <Description>Verify Claude AI classifies leads into standardized industry categories</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Claude API configured with valid key</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads page loads</Expected>
+      </Step>
+
+      <Step id="2" action="scrape-leads" keyword="restaurants" location="Cork, Ireland" maxResults="20">
+        <Description>Scrape 20 mixed-category leads</Description>
+        <Expected>Scraping initiated</Expected>
+      </Step>
+
+      <Step id="3" action="wait" condition="element-contains-text" selector=".status-message" value="Classifying industries" timeout="60000">
+        <Description>Observe "Classifying industries..." status</Description>
+        <Expected>AI classification phase starts</Expected>
+      </Step>
+
+      <Step id="4" action="wait" condition="element-contains-text" selector=".alert-success" value="Saved" timeout="120000">
+        <Description>Wait for completion</Description>
+        <Expected>All leads classified and saved</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="element-contains-text" selector="table tbody tr:nth-child(1) td.category">
+        <Description>Check first lead category</Description>
+        <Expected>Standardized category like "Food & Beverage - Restaurant"</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="element-contains-text" selector="table tbody tr:nth-child(5) td.category">
+        <Description>Check fifth lead category</Description>
+        <Expected>Category present and standardized</Expected>
+      </Step>
+
+      <Step id="7" action="api-call" endpoint="/api/supabase/leads" method="GET">
+        <Description>Fetch leads from database</Description>
+        <Expected>Leads have category field populated</Expected>
+      </Step>
+
+      <Step id="8" action="assert" type="api-response-field" field="data[0].category" exists="true">
+        <Description>Verify category stored in database</Description>
+        <Expected>Category field present in API response</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Claude AI classifies all scraped leads</Result>
+      <Result>Standardized industry categories applied</Result>
+      <Result>Categories stored in database</Result>
+      <Result>Categories visible in UI table</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="api-call" endpoint="/api/claude/classify" status="200" />
+      <Assert type="element-exists" selector="table td.category" />
+      <Assert type="api-response-field" field="data[0].category" exists="true" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="LEAD-003" name="CSV Import - Valid File" priority="high" tags="leads,import,csv">
+    <Description>Import leads from properly formatted CSV file</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Valid CSV file available: test-data/sample-leads-50.csv</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads page loads</Expected>
+      </Step>
+
+      <Step id="2" action="click" target="button[data-tab='upload-file']">
+        <Description>Switch to "Upload File" tab</Description>
+        <Expected>File upload interface shown</Expected>
+      </Step>
+
+      <Step id="3" action="upload-file" target="input[type='file']" file="test-data/sample-leads-50.csv">
+        <Description>Upload valid CSV with columns: name, phone, email, address, city, category</Description>
+        <Expected>File uploaded and validated</Expected>
+      </Step>
+
+      <Step id="4" action="wait" condition="element-contains-text" selector=".alert-success" value="imported" timeout="30000">
+        <Description>Wait for import completion</Description>
+        <Expected>Success message with count</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="text-match" selector=".alert-success" pattern="50.*imported">
+        <Description>Verify import success message</Description>
+        <Expected>Message shows "50 leads imported"</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="element-count" selector="table tbody tr" expected="50">
+        <Description>Verify all leads displayed</Description>
+        <Expected>50 rows in table</Expected>
+      </Step>
+
+      <Step id="7" action="api-call" endpoint="/api/supabase/leads" method="GET">
+        <Description>Fetch leads from database</Description>
+        <Expected>50 leads stored</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>All 50 leads imported successfully</Result>
+      <Result>Duplicate detection works (if any)</Result>
+      <Result>Success count displayed</Result>
+      <Result>Leads appear in table and database</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="text-match" selector=".alert-success" pattern="50.*imported" />
+      <Assert type="element-count" selector="table tbody tr" expected="50" />
+      <Assert type="api-call" endpoint="/api/supabase/leads" status="200" />
+    </Assertions>
+
+    <Cleanup>
+      <Action>Delete imported leads</Action>
+    </Cleanup>
+  </TestCase>
+
+  <TestCase id="LEAD-004" name="CSV Import - Invalid Format" priority="high" tags="leads,import,error-handling">
+    <Description>Handle malformed CSV files gracefully with clear error messages</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Invalid CSV files available</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads page loads</Expected>
+      </Step>
+
+      <Step id="2" action="click" target="button[data-tab='upload-file']">
+        <Description>Switch to "Upload File" tab</Description>
+        <Expected>File upload interface shown</Expected>
+      </Step>
+
+      <Step id="3" action="upload-file" target="input[type='file']" file="test-data/sample-leads-invalid.csv">
+        <Description>Upload CSV missing required "name" column</Description>
+        <Expected>File uploaded</Expected>
+      </Step>
+
+      <Step id="4" action="wait" condition="element-visible" selector=".alert-error" timeout="5000">
+        <Description>Wait for error message</Description>
+        <Expected>Error message displayed</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="text-contains" selector=".alert-error" expected="required">
+        <Description>Verify error message mentions required fields</Description>
+        <Expected>Message: "name and phone are required"</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="element-count" selector="table tbody tr" expected="0">
+        <Description>Verify no partial import</Description>
+        <Expected>No rows added to table</Expected>
+      </Step>
+
+      <Step id="7" action="refresh">
+        <Description>Refresh page</Description>
+        <Expected>Page reloads</Expected>
+      </Step>
+
+      <Step id="8" action="assert" type="element-count" selector="table tbody tr" expected="0">
+        <Description>Verify no leads persisted</Description>
+        <Expected>Still no rows in table</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Invalid CSV rejected</Result>
+      <Result>Clear error message displayed</Result>
+      <Result>No partial import occurs</Result>
+      <Result>Database not modified</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="element-exists" selector=".alert-error" />
+      <Assert type="text-contains" selector=".alert-error" expected="required" />
+      <Assert type="element-count" selector="table tbody tr" expected="0" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="LEAD-005" name="JSON Import - Valid Data" priority="medium" tags="leads,import,json">
+    <Description>Import leads from JSON format successfully</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Valid JSON file available: test-data/sample-leads.json</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads page loads</Expected>
+      </Step>
+
+      <Step id="2" action="click" target="button[data-tab='upload-file']">
+        <Description>Switch to "Upload File" tab</Description>
+        <Expected>File upload interface shown</Expected>
+      </Step>
+
+      <Step id="3" action="upload-file" target="input[type='file']" file="test-data/sample-leads.json">
+        <Description>Upload valid JSON array with lead objects</Description>
+        <Expected>File uploaded</Expected>
+      </Step>
+
+      <Step id="4" action="wait" condition="element-contains-text" selector=".alert-success" value="imported" timeout="30000">
+        <Description>Wait for import success</Description>
+        <Expected>Success message appears</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="text-match" selector=".alert-success" pattern="20.*imported">
+        <Description>Verify import count</Description>
+        <Expected>Message shows "20 leads imported"</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="element-count" selector="table tbody tr" expected="20">
+        <Description>Verify leads displayed</Description>
+        <Expected>20 rows in table</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>JSON file parsed correctly</Result>
+      <Result>20 leads imported successfully</Result>
+      <Result>Leads displayed in table</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="text-match" selector=".alert-success" pattern="20.*imported" />
+      <Assert type="element-count" selector="table tbody tr" expected="20" />
+    </Assertions>
+
+    <Cleanup>
+      <Action>Delete imported leads</Action>
+    </Cleanup>
+  </TestCase>
+
+  <TestCase id="LEAD-006" name="Paste Import - CSV Format" priority="medium" tags="leads,import">
+    <Description>Import leads by pasting CSV text directly</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>CSV text prepared for pasting</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads page loads</Expected>
+      </Step>
+
+      <Step id="2" action="click" target="button[data-tab='copy-paste']">
+        <Description>Switch to "Copy & Paste" tab</Description>
+        <Expected>Textarea shown</Expected>
+      </Step>
+
+      <Step id="3" action="input" target="textarea[name='paste-data']">
+        <Description>Paste valid CSV text (3 rows)</Description>
+        <Data>
+name,phone,email,address,city,category
+Acme Corp,+353-1-555-0001,info@acme.ie,"123 Main St",Dublin,Technology
+Beta Inc,+353-1-555-0002,hello@beta.ie,"45 High St",Cork,Consulting
+Gamma Ltd,+353-1-555-0003,contact@gamma.ie,"78 Park Ave",Galway,Manufacturing
+        </Data>
+        <Expected>Text pasted into textarea</Expected>
+      </Step>
+
+      <Step id="4" action="click" target="button[data-testid='import-leads']">
+        <Description>Click "Import Leads" button</Description>
+        <Expected>Import initiated</Expected>
+      </Step>
+
+      <Step id="5" action="wait" condition="element-contains-text" selector=".alert-success" value="imported" timeout="10000">
+        <Description>Wait for import success</Description>
+        <Expected>Success message appears</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="text-match" selector=".alert-success" pattern="3.*imported">
+        <Description>Verify 3 leads imported</Description>
+        <Expected>Message shows "3 leads imported"</Expected>
+      </Step>
+
+      <Step id="7" action="assert" type="element-count" selector="table tbody tr" min="3">
+        <Description>Verify leads displayed</Description>
+        <Expected>At least 3 rows in table</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Paste import works correctly</Result>
+      <Result>3 leads imported and displayed</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="text-match" selector=".alert-success" pattern="3.*imported" />
+      <Assert type="element-count" selector="table tbody tr" min="3" />
+    </Assertions>
+
+    <Cleanup>
+      <Action>Delete pasted leads</Action>
+    </Cleanup>
+  </TestCase>
+
+  <TestCase id="LEAD-007" name="Duplicate Lead Detection" priority="high" tags="leads,validation,data-integrity">
+    <Description>Verify duplicate leads are skipped during import</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>10 leads already imported</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="import-csv" file="test-data/sample-leads-10.csv">
+        <Description>Import CSV with 10 leads (first import)</Description>
+        <Expected>10 leads imported successfully</Expected>
+      </Step>
+
+      <Step id="2" action="assert" type="text-match" selector=".alert-success" pattern="10.*imported">
+        <Description>Verify first import count</Description>
+        <Expected>10 leads imported</Expected>
+      </Step>
+
+      <Step id="3" action="upload-file" target="input[type='file']" file="test-data/sample-leads-10.csv">
+        <Description>Re-import same CSV file</Description>
+        <Expected>Duplicate detection triggered</Expected>
+      </Step>
+
+      <Step id="4" action="wait" condition="element-visible" selector=".alert-info" timeout="10000">
+        <Description>Wait for duplicate message</Description>
+        <Expected>Info message about duplicates</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="text-match" selector=".alert-info" pattern="10.*duplicates.*skipped">
+        <Description>Verify duplicate message</Description>
+        <Expected>Message: "10 duplicates skipped"</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="text-match" selector=".alert-info" pattern="0.*new.*imported">
+        <Description>Verify no new imports</Description>
+        <Expected>Message: "0 new leads imported"</Expected>
+      </Step>
+
+      <Step id="7" action="assert" type="element-count" selector="table tbody tr" expected="10">
+        <Description>Verify still only 10 leads in table</Description>
+        <Expected>No duplicate rows added</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Duplicate leads detected</Result>
+      <Result>Duplicates skipped, not imported</Result>
+      <Result>Clear message showing duplicate count</Result>
+      <Result>Database maintains integrity</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="text-match" selector=".alert-info" pattern="10.*duplicates.*skipped" />
+      <Assert type="element-count" selector="table tbody tr" expected="10" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="LEAD-008" name="Lead Filtering by Status" priority="medium" tags="leads,filtering">
+    <Description>Filter leads by status (New, Contacted, Interested, Not Interested)</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>30+ leads with mixed statuses exist</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>All leads displayed</Expected>
+      </Step>
+
+      <Step id="2" action="assert" type="element-count" selector="table tbody tr" min="30">
+        <Description>Verify multiple leads present</Description>
+        <Expected>At least 30 rows</Expected>
+      </Step>
+
+      <Step id="3" action="click" target="button[data-filter='new']">
+        <Description>Click "New" status filter</Description>
+        <Expected>Filter applied</Expected>
+      </Step>
+
+      <Step id="4" action="wait" condition="element-stable" selector="table tbody" timeout="2000">
+        <Description>Wait for table to update</Description>
+        <Expected>Table filtered</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="element-attribute" selector="table tbody tr td.status" attribute="data-status" value="new">
+        <Description>Verify only "New" status leads shown</Description>
+        <Expected>All visible rows have status="new"</Expected>
+      </Step>
+
+      <Step id="6" action="click" target="button[data-filter='contacted']">
+        <Description>Switch to "Contacted" filter</Description>
+        <Expected>Filter updated</Expected>
+      </Step>
+
+      <Step id="7" action="wait" condition="element-stable" selector="table tbody" timeout="2000">
+        <Description>Wait for table to update</Description>
+        <Expected>Table refiltered</Expected>
+      </Step>
+
+      <Step id="8" action="assert" type="element-attribute" selector="table tbody tr td.status" attribute="data-status" value="contacted">
+        <Description>Verify only "Contacted" status leads shown</Description>
+        <Expected>All visible rows have status="contacted"</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Status filter works correctly</Result>
+      <Result>Table updates to show only filtered leads</Result>
+      <Result>All status options functional</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="element-attribute" selector="table tbody tr:first-child td.status" attribute="data-status" value="contacted" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="LEAD-009" name="Lead Filtering by Industry Category" priority="medium" tags="leads,filtering">
+    <Description>Filter leads by standardized industry category</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>Leads across 5+ industries exist</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>All leads displayed</Expected>
+      </Step>
+
+      <Step id="2" action="click" target="select[name='category-filter']">
+        <Description>Open category dropdown</Description>
+        <Expected>Dropdown shows available categories</Expected>
+      </Step>
+
+      <Step id="3" action="select" target="select[name='category-filter']" value="Healthcare - Dental">
+        <Description>Select "Healthcare - Dental" category</Description>
+        <Expected>Filter applied</Expected>
+      </Step>
+
+      <Step id="4" action="wait" condition="element-stable" selector="table tbody" timeout="2000">
+        <Description>Wait for table to filter</Description>
+        <Expected>Table shows only dental leads</Expected>
+      </Step>
+
+      <Step id="5" action="assert" type="element-contains-text" selector="table tbody tr td.category">
+        <Description>Verify all visible leads are "Healthcare - Dental"</Description>
+        <Expected>All rows show dental category</Expected>
+      </Step>
+
+      <Step id="6" action="assert" type="element-not-contains-text" selector="table tbody" text="Restaurant">
+        <Description>Verify restaurant leads not shown</Description>
+        <Expected>No restaurant category visible</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Category filter works correctly</Result>
+      <Result>Only matching industry leads displayed</Result>
+      <Result>Other categories hidden</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="element-contains-text" selector="table tbody tr:first-child td.category" expected="Healthcare - Dental" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="LEAD-010" name="Bulk Lead Selection" priority="medium" tags="leads,bulk-operations">
+    <Description>Select multiple leads for batch operations (calling)</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>50+ leads available</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads table displayed</Expected>
+      </Step>
+
+      <Step id="2" action="assert" type="element-count" selector="table tbody tr" min="50">
+        <Description>Verify sufficient leads present</Description>
+        <Expected>At least 50 leads</Expected>
+      </Step>
+
+      <Step id="3" action="click" target="input[type='checkbox'][data-testid='select-all']">
+        <Description>Check "Select All" checkbox</Description>
+        <Expected>All checkboxes checked</Expected>
+      </Step>
+
+      <Step id="4" action="assert" type="element-count" selector="input[type='checkbox']:checked" expected="50">
+        <Description>Verify all 50 leads selected</Description>
+        <Expected>50 checkboxes checked</Expected>
+      </Step>
+
+      <Step id="5" action="click" target="table tbody tr:nth-child(5) input[type='checkbox']">
+        <Description>Uncheck 5th lead</Description>
+        <Expected>5th checkbox unchecked</Expected>
+      </Step>
+
+      <Step id="6" action="click" target="table tbody tr:nth-child(10) input[type='checkbox']">
+        <Description>Uncheck 10th lead</Description>
+        <Expected>10th checkbox unchecked</Expected>
+      </Step>
+
+      <Step id="7" action="assert" type="element-count" selector="input[type='checkbox']:checked" expected="48">
+        <Description>Verify 48 leads selected (50 - 2)</Description>
+        <Expected>48 checkboxes checked</Expected>
+      </Step>
+
+      <Step id="8" action="click" target="button[data-testid='call-selected']">
+        <Description>Click "Call Selected" button</Description>
+        <Expected>Campaign creation initiated</Expected>
+      </Step>
+
+      <Step id="9" action="wait" condition="url-contains" value="/campaigns" timeout="3000">
+        <Description>Wait for redirect to campaigns page</Description>
+        <Expected>Redirected to campaign creation</Expected>
+      </Step>
+
+      <Step id="10" action="assert" type="element-contains-text" selector=".selected-count" expected="48">
+        <Description>Verify 48 leads in campaign</Description>
+        <Expected>Campaign shows 48 selected leads</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Select all works</Result>
+      <Result>Individual deselection works</Result>
+      <Result>Campaign created with correct lead count</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="element-count" selector="input[type='checkbox']:checked" expected="48" />
+      <Assert type="url-contains" expected="/campaigns" />
+      <Assert type="element-contains-text" selector=".selected-count" expected="48" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="LEAD-011" name="Lead Detail Side Panel - Edit Lead" priority="medium" tags="leads,crud">
+    <Description>Edit lead information from side panel</Description>
+
+    <Preconditions>
+      <Precondition>User logged in</Precondition>
+      <Precondition>At least 1 lead exists</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads table displayed</Expected>
+      </Step>
+
+      <Step id="2" action="click" target="table tbody tr:first-child button[data-testid='edit-lead']">
+        <Description>Click "Edit" icon on first lead</Description>
+        <Expected>Side panel opens</Expected>
+      </Step>
+
+      <Step id="3" action="wait" condition="element-visible" selector="[data-testid='lead-side-panel']" timeout="2000">
+        <Description>Wait for side panel to appear</Description>
+        <Expected>Side panel visible</Expected>
+      </Step>
+
+      <Step id="4" action="input" target="input[name='name']" value="Updated Business Name">
+        <Description>Modify business name</Description>
+        <Expected>Name field updated</Expected>
+      </Step>
+
+      <Step id="5" action="input" target="input[name='phone']" value="+353-1-555-9999">
+        <Description>Modify phone number</Description>
+        <Expected>Phone field updated</Expected>
+      </Step>
+
+      <Step id="6" action="select" target="select[name='category']" value="Technology - Software">
+        <Description>Change category</Description>
+        <Expected>Category dropdown updated</Expected>
+      </Step>
+
+      <Step id="7" action="click" target="button[data-testid='save-changes']">
+        <Description>Click "Save Changes" button</Description>
+        <Expected>Changes saved</Expected>
+      </Step>
+
+      <Step id="8" action="wait" condition="element-not-visible" selector="[data-testid='lead-side-panel']" timeout="3000">
+        <Description>Wait for side panel to close</Description>
+        <Expected>Side panel closes</Expected>
+      </Step>
+
+      <Step id="9" action="assert" type="element-contains-text" selector="table tbody tr:first-child td.name" expected="Updated Business Name">
+        <Description>Verify name updated in table</Description>
+        <Expected>Table shows new name</Expected>
+      </Step>
+
+      <Step id="10" action="assert" type="element-contains-text" selector="table tbody tr:first-child td.phone" expected="+353-1-555-9999">
+        <Description>Verify phone updated in table</Description>
+        <Expected>Table shows new phone</Expected>
+      </Step>
+
+      <Step id="11" action="assert" type="element-contains-text" selector="table tbody tr:first-child td.category" expected="Technology - Software">
+        <Description>Verify category updated in table</Description>
+        <Expected>Table shows new category</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Side panel opens on edit click</Result>
+      <Result>Changes saved successfully</Result>
+      <Result>Table updates with new values</Result>
+      <Result>Database updated</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="element-contains-text" selector="table tbody tr:first-child td.name" expected="Updated Business Name" />
+      <Assert type="element-contains-text" selector="table tbody tr:first-child td.phone" expected="+353-1-555-9999" />
+    </Assertions>
+  </TestCase>
+
+  <TestCase id="LEAD-012" name="Free Tier Lead Generation Limit" priority="critical" tags="smoke,leads,billing,limits">
+    <Description>Enforce 10-lead lifetime limit for free tier users with soft and hard paywalls. The system tracks leads_used counter in free_tier_usage table. IMPORTANT: userId must be passed to the generate-leads API for tracking to work.</Description>
+
+    <Preconditions>
+      <Precondition>User logged in as free tier</Precondition>
+      <Precondition>User has generated 8 leads (80% of lifetime limit)</Precondition>
+      <Precondition>free_tier_usage.leads_used = 8 for this user</Precondition>
+    </Preconditions>
+
+    <Steps>
+      <Step id="1" action="navigate" target="/leads">
+        <Description>Navigate to Leads page</Description>
+        <Expected>Leads page loads</Expected>
+      </Step>
+
+      <Step id="2" action="assert" type="element-contains-text" selector="[data-testid='usage-meter']" expected="8/10">
+        <Description>Verify usage meter shows 8/10 leads used (lifetime)</Description>
+        <Expected>Usage: 8/10 remaining</Expected>
+      </Step>
+
+      <Step id="3" action="input" target="input[name='keyword']" value="restaurants">
+        <Description>Enter keyword</Description>
+        <Expected>Keyword filled</Expected>
+      </Step>
+
+      <Step id="4" action="input" target="input[name='location']" value="Cork, Ireland">
+        <Description>Enter location</Description>
+        <Expected>Location filled</Expected>
+      </Step>
+
+      <Step id="5" action="select" target="select[name='maxResults']" value="5">
+        <Description>Select 5 results (would exceed limit - only 2 remaining)</Description>
+        <Expected>Dropdown set to 5</Expected>
+      </Step>
+
+      <Step id="6" action="click" target="button[data-testid='start-scrape']">
+        <Description>Click scrape button</Description>
+        <Expected>Soft paywall triggered (80% threshold)</Expected>
+      </Step>
+
+      <Step id="7" action="wait" condition="element-visible" selector="[data-testid='soft-paywall-modal']" timeout="2000">
+        <Description>Verify soft paywall modal appears</Description>
+        <Expected>Soft paywall shown at 80%</Expected>
+      </Step>
+
+      <Step id="8" action="assert" type="element-contains-text" selector="[data-testid='soft-paywall-modal']" expected="80%">
+        <Description>Verify modal mentions 80% usage</Description>
+        <Expected>Warning about approaching limit</Expected>
+      </Step>
+
+      <Step id="9" action="click" target="button[data-testid='continue-anyway']">
+        <Description>Click "Continue Anyway" button</Description>
+        <Expected>Scraping continues but capped to remaining (2 leads)</Expected>
+      </Step>
+
+      <Step id="10" action="wait" condition="element-contains-text" selector=".alert-success" value="Saved" timeout="120000">
+        <Description>Wait for scraping to complete</Description>
+        <Expected>Only 2 leads scraped (capped to remaining quota)</Expected>
+      </Step>
+
+      <Step id="11" action="assert" type="element-contains-text" selector="[data-testid='usage-meter']" expected="10/10">
+        <Description>Verify usage meter shows 10/10</Description>
+        <Expected>Lifetime limit reached</Expected>
+      </Step>
+
+      <Step id="12" action="click" target="button[data-testid='start-scrape']">
+        <Description>Attempt another scrape beyond limit</Description>
+        <Expected>Hard paywall blocks action</Expected>
+      </Step>
+
+      <Step id="13" action="wait" condition="element-visible" selector="[data-testid='hard-paywall']" timeout="2000">
+        <Description>Verify hard paywall appears</Description>
+        <Expected>Hard paywall displayed</Expected>
+      </Step>
+
+      <Step id="14" action="assert" type="element-contains-text" selector="[data-testid='hard-paywall']" expected="limit reached">
+        <Description>Verify hard paywall message</Description>
+        <Expected>Message: "Free tier limit reached"</Expected>
+      </Step>
+
+      <Step id="15" action="assert" type="element-exists" selector="button:has-text('Upgrade')">
+        <Description>Verify upgrade button present</Description>
+        <Expected>Upgrade CTA shown</Expected>
+      </Step>
+    </Steps>
+
+    <ExpectedResults>
+      <Result>Soft paywall at 80% (8/10 leads used lifetime)</Result>
+      <Result>User can continue to 10/10</Result>
+      <Result>Lead count is CAPPED to remaining quota (requested 5, only 2 generated)</Result>
+      <Result>Hard paywall blocks at 100% (10/10 lifetime)</Result>
+      <Result>No scraping possible beyond limit</Result>
+      <Result>Upgrade prompt shown</Result>
+    </ExpectedResults>
+
+    <Assertions>
+      <Assert type="element-exists" selector="[data-testid='soft-paywall-modal']" description="Soft paywall at 80%" />
+      <Assert type="element-exists" selector="[data-testid='hard-paywall']" description="Hard paywall at 100%" />
+      <Assert type="text-match" selector="[data-testid='usage-meter']" expected="10/10" />
+      <Assert type="element-exists" selector="button:has-text('Upgrade')" />
+      <Assert type="api-call" endpoint="/api/claude/generate-leads" body-contains="userId" description="userId must be passed for tracking" />
+    </Assertions>
+
+    <Notes>
+      <Note>Critical revenue-protection test</Note>
+      <Note>Verifies UsageContext.jsx enforcement logic</Note>
+      <Note>Bug fixed: userId was not being passed to API, bypassing all limits</Note>
+      <Note>The system uses LIFETIME tracking (leads_used counter), not current leads count</Note>
+      <Note>Deleting leads does NOT restore quota - once used, forever counted</Note>
+    </Notes>
+  </TestCase>
+
+</TestGroup>

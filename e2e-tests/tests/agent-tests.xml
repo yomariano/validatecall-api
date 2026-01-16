@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Voice Agent Configuration Test Suite
+  Tests voice agent creation, customization, testing, and management
+
+  Test Count: 7
+  Priority: High
+  Tags: agents, voice, configuration
+-->
+<TestGroup name="Voice Agents" priority="high" tags="agents,voice,configuration">
+
+  <TestCase id="AGENT-001" name="Create Voice Agent - Basic" priority="critical" tags="smoke,agents">
+    <Description>Create new voice agent with default settings</Description>
+    <Preconditions><Precondition>User logged in</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/agents">Navigate to Agents page</Step>
+      <Step id="2" action="click" target="button[data-testid='create-agent']">Click Create Agent</Step>
+      <Step id="3" action="input" target="input[name='name']" value="Friendly Sales Agent">Enter name</Step>
+      <Step id="4" action="select" target="select[name='provider']" value="ElevenLabs">Select ElevenLabs provider</Step>
+      <Step id="5" action="select" target="select[name='voice']" value="Rachel">Select Rachel voice</Step>
+      <Step id="6" action="click" target="button[data-testid='create']">Click Create Agent</Step>
+      <Step id="7" action="wait" condition="element-contains-text" selector=".alert-success" value="created" timeout="5000">Wait for confirmation</Step>
+      <Step id="8" action="assert" type="element-contains-text" selector=".agent-list" expected="Friendly Sales Agent">Verify agent in list</Step>
+    </Steps>
+    <ExpectedResults><Result>Agent created with voice details</Result></ExpectedResults>
+    <Assertions><Assert type="element-contains-text" selector=".agent-list" expected="Friendly Sales Agent" /></Assertions>
+  </TestCase>
+
+  <TestCase id="AGENT-002" name="Voice Agent with Custom System Prompt" priority="high" tags="agents,configuration">
+    <Description>Create agent with custom conversation instructions</Description>
+    <Preconditions><Precondition>User logged in</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/agents">Navigate to Agents</Step>
+      <Step id="2" action="click" target="button[data-testid='create-agent']">Click Create</Step>
+      <Step id="3" action="input" target="input[name='name']" value="Custom Agent">Enter name</Step>
+      <Step id="4" action="input" target="textarea[name='system-prompt']" value="You are a friendly sales representative...">Enter custom prompt</Step>
+      <Step id="5" action="input" target="textarea[name='first-message']" value="Hello! Thanks for taking my call.">Enter first message</Step>
+      <Step id="6" action="click" target="button[data-testid='create']">Save agent</Step>
+      <Step id="7" action="assert" type="text-contains" selector=".alert-success" expected="created">Verify saved</Step>
+    </Steps>
+    <ExpectedResults><Result>Agent saved with custom prompt</Result></ExpectedResults>
+    <Assertions><Assert type="text-contains" selector=".alert-success" expected="created" /></Assertions>
+  </TestCase>
+
+  <TestCase id="AGENT-003" name="AI-Generated Agent Messages" priority="high" tags="agents,ai,claude">
+    <Description>Use Claude AI to generate agent text fields</Description>
+    <Preconditions><Precondition>User logged in</Precondition><Precondition>Claude API configured</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/agents">Navigate to Agents</Step>
+      <Step id="2" action="click" target="button[data-testid='create-agent']">Click Create</Step>
+      <Step id="3" action="click" target="button[data-testid='ai-generate-first-message']">Click AI Generate</Step>
+      <Step id="4" action="input" target="input[name='generation-prompt']" value="warm greeting for dentist survey">Enter description</Step>
+      <Step id="5" action="click" target="button[data-testid='generate']">Click Generate</Step>
+      <Step id="6" action="wait" condition="element-value-not-empty" selector="textarea[name='first-message']" timeout="10000">Wait for generation</Step>
+      <Step id="7" action="assert" type="element-value-length" selector="textarea[name='first-message']" min="20">Verify generated text</Step>
+    </Steps>
+    <ExpectedResults><Result>Claude generates natural greeting</Result></ExpectedResults>
+    <Assertions><Assert type="element-value-length" selector="textarea[name='first-message']" min="20" /></Assertions>
+  </TestCase>
+
+  <TestCase id="AGENT-004" name="Multi-language Voice Agent" priority="high" tags="agents,i18n">
+    <Description>Create agent speaking non-English language</Description>
+    <Preconditions><Precondition>User logged in</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/agents">Navigate to Agents</Step>
+      <Step id="2" action="click" target="button[data-testid='create-agent']">Click Create</Step>
+      <Step id="3" action="select" target="select[name='provider']" value="ElevenLabs">Select ElevenLabs</Step>
+      <Step id="4" action="select" target="select[name='language']" value="es">Select Spanish</Step>
+      <Step id="5" action="select" target="select[name='model']" value="multilingual-v2">Select Multilingual v2</Step>
+      <Step id="6" action="input" target="textarea[name='first-message']" value="¡Hola! Gracias por atender mi llamada.">Enter Spanish message</Step>
+      <Step id="7" action="click" target="button[data-testid='create']">Save agent</Step>
+      <Step id="8" action="assert" type="text-contains" selector=".alert-success" expected="created">Verify created</Step>
+    </Steps>
+    <ExpectedResults><Result>Agent configured for native Spanish pronunciation</Result></ExpectedResults>
+    <Assertions><Assert type="text-contains" selector=".alert-success" expected="created" /></Assertions>
+  </TestCase>
+
+  <TestCase id="AGENT-005" name="Voice Agent - Natural Speech Settings" priority="medium" tags="agents,voice">
+    <Description>Configure voice stability/clarity settings</Description>
+    <Preconditions><Precondition>User logged in</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/agents">Navigate to Agents</Step>
+      <Step id="2" action="click" target="button[data-testid='create-agent']">Click Create</Step>
+      <Step id="3" action="select" target="select[name='provider']" value="ElevenLabs">Select ElevenLabs</Step>
+      <Step id="4" action="input" target="input[name='stability']" value="0.4">Set stability to 0.4</Step>
+      <Step id="5" action="input" target="input[name='clarity']" value="0.75">Set clarity to 0.75</Step>
+      <Step id="6" action="click" target="button[data-testid='create']">Save</Step>
+      <Step id="7" action="assert" type="text-contains" selector=".alert-success" expected="created">Verify saved</Step>
+    </Steps>
+    <ExpectedResults><Result>Settings saved and affect voice output</Result></ExpectedResults>
+    <Assertions><Assert type="text-contains" selector=".alert-success" expected="created" /></Assertions>
+  </TestCase>
+
+  <TestCase id="AGENT-006" name="Test Voice Agent with Live Call" priority="critical" tags="smoke,agents,vapi">
+    <Description>Make test call using configured agent</Description>
+    <Preconditions><Precondition>Voice agent created</Precondition><Precondition>Vapi API configured</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/agents">Navigate to Agents</Step>
+      <Step id="2" action="click" target="button[data-agent-id='123'][data-testid='test-agent']">Click Test on agent</Step>
+      <Step id="3" action="input" target="input[name='test-phone']" value="+353-1-555-0001">Enter test phone</Step>
+      <Step id="4" action="input" target="textarea[name='product-pitch']" value="AI appointment system">Enter pitch</Step>
+      <Step id="5" action="click" target="button[data-testid='start-call']">Click Start Call</Step>
+      <Step id="6" action="wait" condition="element-contains-text" selector=".alert-success" value="initiated" timeout="10000">Wait for confirmation</Step>
+      <Step id="7" action="assert" type="api-call" endpoint="/api/vapi/call" status="200">Verify Vapi call initiated</Step>
+    </Steps>
+    <ExpectedResults><Result>Call initiated, agent uses configured voice</Result></ExpectedResults>
+    <Assertions><Assert type="api-call" endpoint="/api/vapi/call" status="200" /></Assertions>
+  </TestCase>
+
+  <TestCase id="AGENT-007" name="Delete Voice Agent" priority="medium" tags="agents,crud">
+    <Description>Remove agent from system</Description>
+    <Preconditions><Precondition>Voice agent exists</Precondition></Preconditions>
+    <Steps>
+      <Step id="1" action="navigate" target="/agents">Navigate to Agents</Step>
+      <Step id="2" action="click" target="button[data-agent-id='123'][data-testid='delete-agent']">Click Delete</Step>
+      <Step id="3" action="click" target="button[data-testid='confirm-delete']">Confirm deletion</Step>
+      <Step id="4" action="wait" condition="element-contains-text" selector=".alert-success" value="deleted" timeout="5000">Wait for confirmation</Step>
+      <Step id="5" action="assert" type="element-not-exists" selector="[data-agent-id='123']">Verify agent removed from list</Step>
+      <Step id="6" action="navigate" target="/campaigns">Navigate to Campaigns</Step>
+      <Step id="7" action="assert" type="element-not-exists" selector="select[name='voice-agent'] option[value='123']">Verify not in dropdown</Step>
+    </Steps>
+    <ExpectedResults><Result>Agent deleted, no longer appears anywhere</Result></ExpectedResults>
+    <Assertions><Assert type="element-not-exists" selector="[data-agent-id='123']" /></Assertions>
+  </TestCase>
+
+</TestGroup>
