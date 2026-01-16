@@ -29,9 +29,22 @@ const supabase = createClient(
 
 // Plan configurations - matches subscription_plans table
 const PLAN_CONFIG = {
-    basic: { phoneNumbers: 2, dailyCallsPerNumber: 50 },
-    pro: { phoneNumbers: 5, dailyCallsPerNumber: 50 },
-    enterprise: { phoneNumbers: 10, dailyCallsPerNumber: 100 },
+    free: { phoneNumbers: 0, dailyCallsPerNumber: 0, callsPerMonth: 5 },
+    lite: { phoneNumbers: 2, dailyCallsPerNumber: 50, callsPerMonth: 100 },
+    starter: { phoneNumbers: 3, dailyCallsPerNumber: 50, callsPerMonth: 500 },
+    pro: { phoneNumbers: 5, dailyCallsPerNumber: 100, callsPerMonth: 2000 },
+    // Legacy plan names (for backwards compatibility)
+    basic: { phoneNumbers: 2, dailyCallsPerNumber: 50, callsPerMonth: 100 },
+    enterprise: { phoneNumbers: 10, dailyCallsPerNumber: 100, callsPerMonth: 5000 },
+};
+
+// Map Stripe Price IDs to plan IDs (update these with your actual Stripe price IDs)
+const STRIPE_PRICE_TO_PLAN = {
+    // Test mode prices
+    'price_1SnSIcCnj3EJxpv0IVxQdlhC': 'lite',      // Lite $197/month
+    'price_1SnSJ1Cnj3EJxpv0sNc0xOUB': 'starter',   // Starter $497/month
+    'price_1SnSJICnj3EJxpv0DNhpsLEi': 'pro',       // Pro $1337/month
+    // Live mode prices (add your live price IDs here)
 };
 
 /**
@@ -78,24 +91,41 @@ async function handleCheckoutCompleted(session) {
         throw new Error('Missing client_reference_id');
     }
 
-    // Get the plan from metadata or line items
+    // Get the plan from metadata or determine from subscription
     let planId = session.metadata?.plan_id;
 
-    // If no plan_id in metadata, try to determine from price
-    if (!planId && session.line_items?.data?.length > 0) {
-        const priceId = session.line_items.data[0].price?.id;
-        // Look up plan by stripe_price_id
-        const { data: plan } = await supabase
-            .from('subscription_plans')
-            .select('id')
-            .or(`stripe_price_id_monthly.eq.${priceId},stripe_price_id_yearly.eq.${priceId}`)
-            .single();
+    // If no plan_id in metadata, fetch the subscription to get the price
+    if (!planId && session.subscription) {
+        try {
+            // Fetch subscription details from Stripe
+            const Stripe = (await import('stripe')).default;
+            const stripe = new Stripe(STRIPE_SECRET_KEY);
+            const subscription = await stripe.subscriptions.retrieve(session.subscription, {
+                expand: ['items.data.price']
+            });
 
-        planId = plan?.id;
+            const priceId = subscription.items.data[0]?.price?.id;
+            console.log(`  Subscription price ID: ${priceId}`);
+
+            // Map price ID to plan
+            planId = STRIPE_PRICE_TO_PLAN[priceId];
+
+            // If not in our mapping, try database lookup
+            if (!planId && priceId) {
+                const { data: plan } = await supabase
+                    .from('subscription_plans')
+                    .select('id')
+                    .or(`stripe_price_id_monthly.eq.${priceId},stripe_price_id_yearly.eq.${priceId}`)
+                    .single();
+                planId = plan?.id;
+            }
+        } catch (stripeError) {
+            console.error('  ⚠️ Could not fetch subscription from Stripe:', stripeError.message);
+        }
     }
 
-    // Default to basic if still not found
-    planId = planId || 'basic';
+    // Default to lite if still not found (better than 'basic' which doesn't exist in new config)
+    planId = planId || 'lite';
 
     console.log(`  User: ${userId}, Plan: ${planId}, Customer: ${customerId}`);
 
