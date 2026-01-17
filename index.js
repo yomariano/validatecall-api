@@ -11,9 +11,11 @@ import claudeRoutes from './routes/claude.js';
 import usageRoutes from './routes/usage.js';
 import emailRoutes from './routes/email.js';
 import domainsRoutes from './routes/domains.js';
+import adminRoutes from './routes/admin.js';
 
 // Import services
 import callScheduler from './services/callScheduler.js';
+import triggerEngine from './services/triggerEngine.js';
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -63,6 +65,7 @@ app.get('/health', (req, res) => {
             claude: !!process.env.CLAUDE_API_URL,
             resend: !!process.env.RESEND_API_KEY,
             scheduler: true,
+            triggerEngine: true,
         }
     });
 });
@@ -77,6 +80,7 @@ app.use('/api/claude', claudeRoutes);
 app.use('/api/usage', usageRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/domains', domainsRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -98,4 +102,7 @@ app.listen(PORT, () => {
 
     // Start the call scheduler
     callScheduler.start();
+
+    // Start the trigger engine (automated marketing emails)
+    triggerEngine.start();
 });

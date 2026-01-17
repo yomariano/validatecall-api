@@ -378,4 +378,38 @@ router.post('/test', async (req, res) => {
     }
 });
 
+/**
+ * POST /api/email/track-event
+ * Track user events for trigger automation
+ * Body: { userId, eventType, eventData?, pageUrl? }
+ */
+router.post('/track-event', async (req, res) => {
+    try {
+        const { userId, eventType, eventData, pageUrl, referrer } = req.body;
+
+        if (!userId || !eventType) {
+            return res.status(400).json({ error: 'userId and eventType are required' });
+        }
+
+        const { error } = await supabase.from('user_events').insert({
+            user_id: userId,
+            event_type: eventType,
+            event_data: eventData || null,
+            page_url: pageUrl || null,
+            referrer: referrer || null,
+        });
+
+        if (error) {
+            console.warn('Failed to track event:', error.message);
+            // Don't fail the request - event tracking is non-critical
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Track event error:', error);
+        // Don't fail - event tracking is non-critical
+        res.json({ success: true });
+    }
+});
+
 export default router;
