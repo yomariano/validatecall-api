@@ -302,12 +302,13 @@ router.post('/send-cold-email', async (req, res) => {
             return res.status(400).json({ error: 'toEmail, subject, and body are required' });
         }
 
-        // Generate HTML version
+        // Generate HTML version with professional template
         const htmlContent = generateColdEmailHtml({
             subject,
             body,
             senderName,
             senderCompany,
+            senderEmail,
         });
 
         // Send the email (pass userId to use their Resend API key if available)
@@ -644,12 +645,13 @@ router.post('/responses/:id/reply', async (req, res) => {
             return res.status(404).json({ error: 'Email response not found' });
         }
 
-        // Generate reply HTML
+        // Generate reply HTML with professional template
         const htmlContent = generateColdEmailHtml({
             subject,
             body,
             senderName,
             senderCompany,
+            senderEmail,
         });
 
         // Send the reply (pass userId to use their Resend API key if available)

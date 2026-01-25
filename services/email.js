@@ -516,23 +516,93 @@ export async function sendColdEmail({ userId, toEmail, toName, subject, htmlCont
 }
 
 /**
- * Generate cold email HTML template
+ * Generate cold email HTML template with professional header, body, and footer
  */
-export function generateColdEmailHtml({ subject, body, senderName, senderCompany }) {
+export function generateColdEmailHtml({ subject, body, senderName, senderCompany, senderEmail }) {
+    // Extract domain from sender email for branding
+    const domain = senderEmail ? senderEmail.split('@')[1] : '';
+    const brandName = senderCompany || (domain ? domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1) : 'Our Team');
+
+    // Generate a brand color based on the domain (consistent color per domain)
+    const hashCode = (str) => {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return hash;
+    };
+
+    const hue = domain ? Math.abs(hashCode(domain)) % 360 : 220;
+    const primaryColor = `hsl(${hue}, 70%, 50%)`;
+    const primaryColorDark = `hsl(${hue}, 70%, 40%)`;
+    const primaryColorLight = `hsl(${hue}, 70%, 95%)`;
+
     return `
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${subject}</title>
 </head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-    <div style="white-space: pre-wrap;">${body.replace(/\n/g, '<br>')}</div>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f5f5f5;">
+    <table role="presentation" style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 20px 0;">
+                <table role="presentation" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, ${primaryColor} 0%, ${primaryColorDark} 100%); padding: 24px 32px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.5px;">${brandName}</h1>
+                            ${domain ? `<p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.85); font-size: 13px;">${domain}</p>` : ''}
+                        </td>
+                    </tr>
 
-    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">
-        <p style="margin: 0;">Best regards,<br>
-        <strong>${senderName || 'The Team'}</strong>${senderCompany ? `<br>${senderCompany}` : ''}</p>
-    </div>
+                    <!-- Body -->
+                    <tr>
+                        <td style="padding: 32px;">
+                            <div style="font-size: 15px; line-height: 1.7; color: #374151;">
+                                ${body.split('\n').map(line => {
+                                    // Check if line is a bullet point
+                                    if (line.trim().match(/^[•\-\*]\s/)) {
+                                        return `<div style="padding-left: 16px; margin: 8px 0;">${line.trim()}</div>`;
+                                    }
+                                    // Empty line = paragraph break
+                                    if (line.trim() === '') {
+                                        return '<div style="height: 16px;"></div>';
+                                    }
+                                    return `<div style="margin: 0;">${line}</div>`;
+                                }).join('')}
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Footer / Signature -->
+                    <tr>
+                        <td style="padding: 0 32px 32px 32px;">
+                            <div style="border-top: 1px solid #e5e7eb; padding-top: 24px;">
+                                <p style="margin: 0 0 4px 0; color: #6b7280; font-size: 14px;">Best regards,</p>
+                                <p style="margin: 0; font-size: 15px;">
+                                    <strong style="color: #111827;">${senderName || 'The Team'}</strong>
+                                </p>
+                                ${senderCompany || domain ? `<p style="margin: 4px 0 0 0; color: #6b7280; font-size: 14px;">${senderCompany || brandName}</p>` : ''}
+                                ${senderEmail ? `<p style="margin: 4px 0 0 0;"><a href="mailto:${senderEmail}" style="color: ${primaryColor}; text-decoration: none; font-size: 14px;">${senderEmail}</a></p>` : ''}
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- Bottom Brand Bar -->
+                    <tr>
+                        <td style="background-color: ${primaryColorLight}; padding: 16px 32px; text-align: center;">
+                            <p style="margin: 0; color: #6b7280; font-size: 12px;">
+                                ${domain ? `Sent from <a href="https://${domain}" style="color: ${primaryColor}; text-decoration: none;">${domain}</a>` : ''}
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>`;
 }
