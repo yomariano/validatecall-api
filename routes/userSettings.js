@@ -5,6 +5,8 @@
  */
 
 import { Router } from 'express';
+import multer from 'multer';
+import { createClient } from '@supabase/supabase-js';
 import {
     // Provider settings
     getEmailProviderSettings,
@@ -27,6 +29,28 @@ import {
 } from '../services/userSettings.js';
 
 const router = Router();
+
+// Supabase client for storage
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// Configure multer for memory storage (we'll upload to Supabase)
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 2 * 1024 * 1024, // 2MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        // Only allow images
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only image files are allowed'), false);
+        }
+    },
+});
 
 // =============================================
 // EMAIL PROVIDER SETTINGS
@@ -412,6 +436,133 @@ router.post('/brand', async (req, res) => {
         res.json(result);
     } catch (error) {
         console.error('Save brand settings error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/settings/brand/logo
+ * Upload a brand logo image
+ * Form data: userId, logo (file)
+ */
+router.post('/brand/logo', upload.single('logo'), async (req, res) => {
+    try {
+        const { userId } = req.body;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'userId is required' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        // Generate unique filename
+        const fileExt = req.file.originalname.split('.').pop();
+        const fileName = `${userId}/logo-${Date.now()}.${fileExt}`;
+
+        // Upload to Supabase Storage
+        const { data, error } = await supabase.storage
+            .from('brand-logos')
+            .upload(fileName, req.file.buffer, {
+                contentType: req.file.mimetype,
+                upsert: true,
+            });
+
+        if (error) {
+            // If bucket doesn't exist, create it
+            if (error.message?.includes('not found') || error.statusCode === '404') {
+                // Try to create the bucket
+                const { error: createError } = await supabase.storage.createBucket('brand-logos', {
+                    public: true,
+                    fileSizeLimit: 2097152, // 2MB
+                    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml', 'image/webp'],
+                });
+
+                if (createError && !createError.message?.includes('already exists')) {
+                    console.error('Failed to create bucket:', createError);
+                    return res.status(500).json({ error: 'Failed to create storage bucket' });
+                }
+
+                // Retry upload
+                const { data: retryData, error: retryError } = await supabase.storage
+                    .from('brand-logos')
+                    .upload(fileName, req.file.buffer, {
+                        contentType: req.file.mimetype,
+                        upsert: true,
+                    });
+
+                if (retryError) {
+                    console.error('Failed to upload logo (retry):', retryError);
+                    return res.status(500).json({ error: 'Failed to upload logo' });
+                }
+            } else {
+                console.error('Failed to upload logo:', error);
+                return res.status(500).json({ error: 'Failed to upload logo' });
+            }
+        }
+
+        // Get public URL
+        const { data: publicUrlData } = supabase.storage
+            .from('brand-logos')
+            .getPublicUrl(fileName);
+
+        const logoUrl = publicUrlData.publicUrl;
+
+        // Save the URL to user's brand settings
+        const saveResult = await saveBrandSettings(userId, { brandLogoUrl: logoUrl });
+
+        if (!saveResult.success) {
+            return res.status(500).json({ error: 'Failed to save logo URL' });
+        }
+
+        res.json({
+            success: true,
+            logoUrl,
+            message: 'Logo uploaded successfully',
+        });
+    } catch (error) {
+        console.error('Upload logo error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * DELETE /api/settings/brand/logo
+ * Delete the brand logo
+ * Query: userId
+ */
+router.delete('/brand/logo', async (req, res) => {
+    try {
+        const { userId } = req.query;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'userId is required' });
+        }
+
+        // Get current logo URL to delete from storage
+        const brandResult = await getBrandSettings(userId);
+        if (brandResult.success && brandResult.brandLogoUrl) {
+            // Extract file path from URL
+            const url = new URL(brandResult.brandLogoUrl);
+            const pathParts = url.pathname.split('/brand-logos/');
+            if (pathParts.length > 1) {
+                const filePath = pathParts[1];
+                // Delete from storage
+                await supabase.storage.from('brand-logos').remove([filePath]);
+            }
+        }
+
+        // Clear the logo URL in settings
+        const saveResult = await saveBrandSettings(userId, { brandLogoUrl: null });
+
+        if (!saveResult.success) {
+            return res.status(500).json({ error: 'Failed to clear logo URL' });
+        }
+
+        res.json({ success: true, message: 'Logo deleted' });
+    } catch (error) {
+        console.error('Delete logo error:', error);
         res.status(500).json({ error: error.message });
     }
 });
