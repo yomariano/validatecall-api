@@ -558,7 +558,10 @@ router.post('/campaigns', async (req, res) => {
             return res.status(401).json({ error: 'Authentication required' });
         }
 
-        const { name, productIdea, companyContext, totalLeads, leadIds, selectedAgentId } = req.body;
+        const {
+            name, productIdea, companyContext, totalLeads, leadIds, selectedAgentId,
+            senderName, senderEmail, emailSubject, emailBody
+        } = req.body;
 
         const { data, error } = await supabase
             .from('campaigns')
@@ -570,6 +573,10 @@ router.post('/campaigns', async (req, res) => {
                 total_leads: totalLeads || 0,
                 lead_ids: leadIds || [],
                 selected_agent_id: selectedAgentId || null,
+                sender_name: senderName || null,
+                sender_email: senderEmail || null,
+                email_subject: emailSubject || null,
+                email_body: emailBody || null,
             })
             .select()
             .single();
