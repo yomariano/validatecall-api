@@ -690,7 +690,7 @@ export async function getBrandSettings(userId) {
     try {
         const { data, error } = await supabase
             .from('profiles')
-            .select('brand_logo_url, brand_color, brand_name')
+            .select('brand_logo_url, brand_color, brand_name, brand_cta_text, brand_cta_url')
             .eq('id', userId)
             .single();
 
@@ -704,6 +704,8 @@ export async function getBrandSettings(userId) {
             brandLogoUrl: data?.brand_logo_url || null,
             brandColor: data?.brand_color || null,
             brandName: data?.brand_name || null,
+            brandCtaText: data?.brand_cta_text || null,
+            brandCtaUrl: data?.brand_cta_url || null,
         };
     } catch (err) {
         console.error('Get brand settings exception:', err);
@@ -717,17 +719,28 @@ export async function getBrandSettings(userId) {
  * @param {Object} settings - Brand settings to save
  * @returns {Object} - Result
  */
-export async function saveBrandSettings(userId, { brandLogoUrl, brandColor, brandName }) {
+export async function saveBrandSettings(userId, { brandLogoUrl, brandColor, brandName, brandCtaText, brandCtaUrl }) {
     try {
         // Validate color format if provided
         if (brandColor && !/^#[0-9A-Fa-f]{6}$/.test(brandColor)) {
             return { success: false, error: 'Invalid color format. Use hex format like #6366f1' };
         }
 
+        // Validate URL format if provided
+        if (brandCtaUrl && brandCtaUrl.trim()) {
+            try {
+                new URL(brandCtaUrl);
+            } catch {
+                return { success: false, error: 'Invalid CTA URL format' };
+            }
+        }
+
         const updates = {};
         if (brandLogoUrl !== undefined) updates.brand_logo_url = brandLogoUrl || null;
         if (brandColor !== undefined) updates.brand_color = brandColor || null;
         if (brandName !== undefined) updates.brand_name = brandName || null;
+        if (brandCtaText !== undefined) updates.brand_cta_text = brandCtaText || null;
+        if (brandCtaUrl !== undefined) updates.brand_cta_url = brandCtaUrl || null;
 
         const { error } = await supabase
             .from('profiles')

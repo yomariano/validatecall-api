@@ -312,6 +312,8 @@ router.post('/send-cold-email', async (req, res) => {
                     brandLogoUrl: brandResult.brandLogoUrl,
                     brandColor: brandResult.brandColor,
                     brandName: brandResult.brandName,
+                    brandCtaText: brandResult.brandCtaText,
+                    brandCtaUrl: brandResult.brandCtaUrl,
                 };
             }
         }
@@ -326,6 +328,8 @@ router.post('/send-cold-email', async (req, res) => {
             brandLogoUrl: brandSettings.brandLogoUrl,
             brandColor: brandSettings.brandColor,
             brandName: brandSettings.brandName,
+            brandCtaText: brandSettings.brandCtaText,
+            brandCtaUrl: brandSettings.brandCtaUrl,
         });
 
         // Send the email (pass userId to use their Resend API key if available)
@@ -670,6 +674,8 @@ router.post('/responses/:id/reply', async (req, res) => {
                 brandLogoUrl: brandResult.brandLogoUrl,
                 brandColor: brandResult.brandColor,
                 brandName: brandResult.brandName,
+                brandCtaText: brandResult.brandCtaText,
+                brandCtaUrl: brandResult.brandCtaUrl,
             };
         }
 
@@ -683,6 +689,8 @@ router.post('/responses/:id/reply', async (req, res) => {
             brandLogoUrl: brandSettings.brandLogoUrl,
             brandColor: brandSettings.brandColor,
             brandName: brandSettings.brandName,
+            brandCtaText: brandSettings.brandCtaText,
+            brandCtaUrl: brandSettings.brandCtaUrl,
         });
 
         // Send the reply (pass userId to use their Resend API key if available)

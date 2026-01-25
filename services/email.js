@@ -526,8 +526,10 @@ export async function sendColdEmail({ userId, toEmail, toName, subject, htmlCont
  * @param {string} options.brandLogoUrl - URL to brand logo (optional)
  * @param {string} options.brandColor - Hex color for brand (optional, e.g., #6366f1)
  * @param {string} options.brandName - Brand/company name for header (optional)
+ * @param {string} options.brandCtaText - CTA button text (optional)
+ * @param {string} options.brandCtaUrl - CTA button URL (optional)
  */
-export function generateColdEmailHtml({ subject, body, senderName, senderCompany, senderEmail, brandLogoUrl, brandColor, brandName: customBrandName }) {
+export function generateColdEmailHtml({ subject, body, senderName, senderCompany, senderEmail, brandLogoUrl, brandColor, brandName: customBrandName, brandCtaText, brandCtaUrl }) {
     // Extract domain from sender email for branding fallback
     const domain = senderEmail ? senderEmail.split('@')[1] : '';
     const brandName = customBrandName || senderCompany || (domain ? domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1) : 'Our Team');
@@ -634,6 +636,23 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
                             </div>
                         </td>
                     </tr>
+
+                    ${brandCtaText && brandCtaUrl ? `
+                    <!-- CTA Button -->
+                    <tr>
+                        <td style="padding: 0 32px 32px 32px;">
+                            <table role="presentation" style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <a href="${brandCtaUrl}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, ${primaryColor} 0%, ${primaryColorDark} 100%); color: #ffffff; text-decoration: none; font-weight: 600; font-size: 15px; padding: 14px 32px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
+                                            ${brandCtaText}
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    ` : ''}
 
                     <!-- Footer / Signature -->
                     <tr>
