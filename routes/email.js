@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { sendWelcomeEmail, sendUsageAlertEmail, sendColdEmail, generateColdEmailHtml, isConfigured } from '../services/email.js';
+import { getBrandSettings } from '../services/userSettings.js';
 
 // Allow self-signed certificates in development
 if (process.env.NODE_ENV !== 'production') {
@@ -302,13 +303,29 @@ router.post('/send-cold-email', async (req, res) => {
             return res.status(400).json({ error: 'toEmail, subject, and body are required' });
         }
 
+        // Fetch user's brand settings if userId provided
+        let brandSettings = {};
+        if (userId) {
+            const brandResult = await getBrandSettings(userId);
+            if (brandResult.success) {
+                brandSettings = {
+                    brandLogoUrl: brandResult.brandLogoUrl,
+                    brandColor: brandResult.brandColor,
+                    brandName: brandResult.brandName,
+                };
+            }
+        }
+
         // Generate HTML version with professional template
         const htmlContent = generateColdEmailHtml({
             subject,
             body,
             senderName,
-            senderCompany,
+            senderCompany: senderCompany || brandSettings.brandName,
             senderEmail,
+            brandLogoUrl: brandSettings.brandLogoUrl,
+            brandColor: brandSettings.brandColor,
+            brandName: brandSettings.brandName,
         });
 
         // Send the email (pass userId to use their Resend API key if available)
@@ -645,13 +662,27 @@ router.post('/responses/:id/reply', async (req, res) => {
             return res.status(404).json({ error: 'Email response not found' });
         }
 
+        // Fetch user's brand settings
+        let brandSettings = {};
+        const brandResult = await getBrandSettings(userId);
+        if (brandResult.success) {
+            brandSettings = {
+                brandLogoUrl: brandResult.brandLogoUrl,
+                brandColor: brandResult.brandColor,
+                brandName: brandResult.brandName,
+            };
+        }
+
         // Generate reply HTML with professional template
         const htmlContent = generateColdEmailHtml({
             subject,
             body,
             senderName,
-            senderCompany,
+            senderCompany: senderCompany || brandSettings.brandName,
             senderEmail,
+            brandLogoUrl: brandSettings.brandLogoUrl,
+            brandColor: brandSettings.brandColor,
+            brandName: brandSettings.brandName,
         });
 
         // Send the reply (pass userId to use their Resend API key if available)

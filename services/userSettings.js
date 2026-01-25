@@ -678,6 +678,75 @@ export async function getUserSendGridSenders(userId) {
 }
 
 // =============================================
+// BRAND SETTINGS
+// =============================================
+
+/**
+ * Get user's brand settings
+ * @param {string} userId - The user's ID
+ * @returns {Object} - Brand settings
+ */
+export async function getBrandSettings(userId) {
+    try {
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('brand_logo_url, brand_color, brand_name')
+            .eq('id', userId)
+            .single();
+
+        if (error) {
+            console.error('Get brand settings error:', error);
+            return { success: false, error: error.message };
+        }
+
+        return {
+            success: true,
+            brandLogoUrl: data?.brand_logo_url || null,
+            brandColor: data?.brand_color || null,
+            brandName: data?.brand_name || null,
+        };
+    } catch (err) {
+        console.error('Get brand settings exception:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Save user's brand settings
+ * @param {string} userId - The user's ID
+ * @param {Object} settings - Brand settings to save
+ * @returns {Object} - Result
+ */
+export async function saveBrandSettings(userId, { brandLogoUrl, brandColor, brandName }) {
+    try {
+        // Validate color format if provided
+        if (brandColor && !/^#[0-9A-Fa-f]{6}$/.test(brandColor)) {
+            return { success: false, error: 'Invalid color format. Use hex format like #6366f1' };
+        }
+
+        const updates = {};
+        if (brandLogoUrl !== undefined) updates.brand_logo_url = brandLogoUrl || null;
+        if (brandColor !== undefined) updates.brand_color = brandColor || null;
+        if (brandName !== undefined) updates.brand_name = brandName || null;
+
+        const { error } = await supabase
+            .from('profiles')
+            .update(updates)
+            .eq('id', userId);
+
+        if (error) {
+            console.error('Save brand settings error:', error);
+            return { success: false, error: error.message };
+        }
+
+        return { success: true, message: 'Brand settings saved' };
+    } catch (err) {
+        console.error('Save brand settings exception:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+// =============================================
 // HELPER FUNCTIONS
 // =============================================
 
@@ -712,4 +781,7 @@ export default {
     deleteSendGridApiKey,
     verifySendGridApiKey,
     getUserSendGridSenders,
+    // Brand settings
+    getBrandSettings,
+    saveBrandSettings,
 };

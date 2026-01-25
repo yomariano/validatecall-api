@@ -21,6 +21,9 @@ import {
     deleteSendGridApiKey,
     verifySendGridApiKey,
     getUserSendGridSenders,
+    // Brand settings
+    getBrandSettings,
+    saveBrandSettings,
 } from '../services/userSettings.js';
 
 const router = Router();
@@ -354,6 +357,62 @@ router.get('/sendgrid/senders', async (req, res) => {
     } catch (error) {
         console.error('Get user SendGrid senders error:', error);
         res.status(500).json({ error: error.message, senders: [] });
+    }
+});
+
+// =============================================
+// BRAND SETTINGS ROUTES
+// =============================================
+
+/**
+ * GET /api/settings/brand
+ * Get user's brand settings (logo, color, company name)
+ * Query: userId (required)
+ */
+router.get('/brand', async (req, res) => {
+    try {
+        const { userId } = req.query;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'userId is required' });
+        }
+
+        const result = await getBrandSettings(userId);
+
+        if (!result.success) {
+            return res.status(500).json({ error: result.error });
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Get brand settings error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/settings/brand
+ * Save user's brand settings
+ * Body: { userId, brandLogoUrl?, brandColor?, brandName? }
+ */
+router.post('/brand', async (req, res) => {
+    try {
+        const { userId, brandLogoUrl, brandColor, brandName } = req.body;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'userId is required' });
+        }
+
+        const result = await saveBrandSettings(userId, { brandLogoUrl, brandColor, brandName });
+
+        if (!result.success) {
+            return res.status(400).json({ error: result.error });
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Save brand settings error:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 

@@ -517,13 +517,48 @@ export async function sendColdEmail({ userId, toEmail, toName, subject, htmlCont
 
 /**
  * Generate cold email HTML template with professional header, body, and footer
+ * @param {Object} options - Template options
+ * @param {string} options.subject - Email subject
+ * @param {string} options.body - Email body text
+ * @param {string} options.senderName - Sender's name
+ * @param {string} options.senderCompany - Sender's company name
+ * @param {string} options.senderEmail - Sender's email address
+ * @param {string} options.brandLogoUrl - URL to brand logo (optional)
+ * @param {string} options.brandColor - Hex color for brand (optional, e.g., #6366f1)
+ * @param {string} options.brandName - Brand/company name for header (optional)
  */
-export function generateColdEmailHtml({ subject, body, senderName, senderCompany, senderEmail }) {
-    // Extract domain from sender email for branding
+export function generateColdEmailHtml({ subject, body, senderName, senderCompany, senderEmail, brandLogoUrl, brandColor, brandName: customBrandName }) {
+    // Extract domain from sender email for branding fallback
     const domain = senderEmail ? senderEmail.split('@')[1] : '';
-    const brandName = senderCompany || (domain ? domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1) : 'Our Team');
+    const brandName = customBrandName || senderCompany || (domain ? domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1) : 'Our Team');
 
-    // Generate a brand color based on the domain (consistent color per domain)
+    // Helper to convert hex to HSL components
+    const hexToHsl = (hex) => {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        if (!result) return null;
+
+        let r = parseInt(result[1], 16) / 255;
+        let g = parseInt(result[2], 16) / 255;
+        let b = parseInt(result[3], 16) / 255;
+
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        let h, s, l = (max + min) / 2;
+
+        if (max === min) {
+            h = s = 0;
+        } else {
+            const d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            switch (max) {
+                case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+                case g: h = ((b - r) / d + 2) / 6; break;
+                case b: h = ((r - g) / d + 4) / 6; break;
+            }
+        }
+        return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+    };
+
+    // Generate a brand color based on the domain (consistent color per domain) - fallback
     const hashCode = (str) => {
         let hash = 0;
         for (let i = 0; i < str.length; i++) {
@@ -532,10 +567,33 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
         return hash;
     };
 
-    const hue = domain ? Math.abs(hashCode(domain)) % 360 : 220;
-    const primaryColor = `hsl(${hue}, 70%, 50%)`;
-    const primaryColorDark = `hsl(${hue}, 70%, 40%)`;
-    const primaryColorLight = `hsl(${hue}, 70%, 95%)`;
+    // Determine colors - use custom brand color if provided, otherwise generate from domain
+    let primaryColor, primaryColorDark, primaryColorLight;
+
+    if (brandColor && /^#[0-9A-Fa-f]{6}$/.test(brandColor)) {
+        // Use custom brand color
+        const hsl = hexToHsl(brandColor);
+        if (hsl) {
+            primaryColor = `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`;
+            primaryColorDark = `hsl(${hsl.h}, ${hsl.s}%, ${Math.max(hsl.l - 10, 20)}%)`;
+            primaryColorLight = `hsl(${hsl.h}, ${Math.min(hsl.s, 30)}%, 95%)`;
+        } else {
+            primaryColor = brandColor;
+            primaryColorDark = brandColor;
+            primaryColorLight = '#f5f5f5';
+        }
+    } else {
+        // Fallback: generate color from domain hash
+        const hue = domain ? Math.abs(hashCode(domain)) % 360 : 220;
+        primaryColor = `hsl(${hue}, 70%, 50%)`;
+        primaryColorDark = `hsl(${hue}, 70%, 40%)`;
+        primaryColorLight = `hsl(${hue}, 70%, 95%)`;
+    }
+
+    // Build header content - logo or text
+    const headerContent = brandLogoUrl
+        ? `<img src="${brandLogoUrl}" alt="${brandName}" style="max-height: 50px; max-width: 200px; margin-bottom: 8px;" />`
+        : `<h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.5px;">${brandName}</h1>`;
 
     return `
 <!DOCTYPE html>
@@ -553,7 +611,7 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
                     <!-- Header -->
                     <tr>
                         <td style="background: linear-gradient(135deg, ${primaryColor} 0%, ${primaryColorDark} 100%); padding: 24px 32px; text-align: center;">
-                            <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.5px;">${brandName}</h1>
+                            ${headerContent}
                             ${domain ? `<p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.85); font-size: 13px;">${domain}</p>` : ''}
                         </td>
                     </tr>
@@ -586,7 +644,7 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
                                     <strong style="color: #111827;">${senderName || 'The Team'}</strong>
                                 </p>
                                 ${senderCompany || domain ? `<p style="margin: 4px 0 0 0; color: #6b7280; font-size: 14px;">${senderCompany || brandName}</p>` : ''}
-                                ${senderEmail ? `<p style="margin: 4px 0 0 0;"><a href="mailto:${senderEmail}" style="color: ${primaryColor}; text-decoration: none; font-size: 14px;">${senderEmail}</a></p>` : ''}
+                                ${senderEmail ? `<p style="margin: 4px 0 0 0;"><a href="mailto:${senderEmail}" style="color: ${brandColor || primaryColor}; text-decoration: none; font-size: 14px;">${senderEmail}</a></p>` : ''}
                             </div>
                         </td>
                     </tr>
@@ -595,7 +653,7 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
                     <tr>
                         <td style="background-color: ${primaryColorLight}; padding: 16px 32px; text-align: center;">
                             <p style="margin: 0; color: #6b7280; font-size: 12px;">
-                                ${domain ? `Sent from <a href="https://${domain}" style="color: ${primaryColor}; text-decoration: none;">${domain}</a>` : ''}
+                                ${domain ? `Sent from <a href="https://${domain}" style="color: ${brandColor || primaryColor}; text-decoration: none;">${domain}</a>` : ''}
                             </p>
                         </td>
                     </tr>
