@@ -118,6 +118,7 @@ router.post('/welcome', async (req, res) => {
 
         if (result.success) {
             // Log the email (important for deduplication)
+            // Uses unique constraint to prevent race conditions
             try {
                 await supabase.from('email_logs').insert({
                     user_id: userId || null,
@@ -126,8 +127,14 @@ router.post('/welcome', async (req, res) => {
                     resend_id: result.emailId,
                     status: 'sent',
                 });
+                console.log(`✉️ Welcome email sent and logged for ${email}`);
             } catch (err) {
-                console.warn('Failed to log email:', err.message);
+                // If unique constraint violation, email was already logged (race condition)
+                if (err.code === '23505') {
+                    console.log(`✉️ Welcome email log already exists for ${email} (race condition handled)`);
+                } else {
+                    console.warn('Failed to log email:', err.message);
+                }
             }
         }
 
