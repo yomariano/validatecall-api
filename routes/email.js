@@ -69,10 +69,34 @@ router.get('/status', (req, res) => {
  */
 router.post('/welcome', async (req, res) => {
     try {
-        const { userId, email, name } = req.body;
+        const { userId, email, name, force } = req.body;
 
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
+        }
+
+        // Check if welcome email was already sent to this user/email (prevent duplicates)
+        // Skip check if force=true (for testing/resending)
+        if (!force) {
+            const { data: existingEmail } = await supabase
+                .from('email_logs')
+                .select('id, created_at')
+                .eq('email_type', 'welcome')
+                .eq('recipient', email)
+                .eq('status', 'sent')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (existingEmail) {
+                console.log(`Welcome email already sent to ${email} at ${existingEmail.created_at}, skipping duplicate`);
+                return res.json({
+                    success: true,
+                    skipped: true,
+                    message: 'Welcome email already sent to this address',
+                    previouslySentAt: existingEmail.created_at,
+                });
+            }
         }
 
         // If userId provided but no name, fetch from profile
@@ -93,7 +117,7 @@ router.post('/welcome', async (req, res) => {
         });
 
         if (result.success) {
-            // Log the email (ignore errors - logging is optional)
+            // Log the email (important for deduplication)
             try {
                 await supabase.from('email_logs').insert({
                     user_id: userId || null,
