@@ -11,6 +11,7 @@
         "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch"
     },
     "dependencies": {
+        "@sendgrid/mail": "^8.1.6",
         "@supabase/supabase-js": "^2.86.2",
         "cors": "^2.8.5",
         "dotenv": "^16.4.5",

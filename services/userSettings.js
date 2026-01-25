@@ -1,15 +1,141 @@
 /**
  * User Settings Service
- * Handles user-specific settings like Resend API key management
+ * Handles user-specific settings like email provider API key management
+ * Supports: Resend, SendGrid
  */
 
 import { Resend } from 'resend';
+import sgMail from '@sendgrid/mail';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
     process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
+// =============================================
+// EMAIL PROVIDER SETTINGS
+// =============================================
+
+/**
+ * Get user's email provider settings
+ * @param {string} userId - The user's ID
+ * @returns {Object} - Complete email settings status
+ */
+export async function getEmailProviderSettings(userId) {
+    try {
+        const { data, error } = await supabase
+            .from('profiles')
+            .select(`
+                email_provider,
+                resend_api_key,
+                resend_api_key_verified,
+                resend_api_key_verified_at,
+                sendgrid_api_key,
+                sendgrid_api_key_verified,
+                sendgrid_api_key_verified_at
+            `)
+            .eq('id', userId)
+            .single();
+
+        if (error) {
+            console.error('Failed to get email provider settings:', error);
+            return { success: false, error: error.message };
+        }
+
+        return {
+            success: true,
+            provider: data.email_provider || null,
+            resend: {
+                hasApiKey: !!data.resend_api_key,
+                maskedKey: maskApiKey(data.resend_api_key),
+                verified: data.resend_api_key_verified || false,
+                verifiedAt: data.resend_api_key_verified_at,
+            },
+            sendgrid: {
+                hasApiKey: !!data.sendgrid_api_key,
+                maskedKey: maskApiKey(data.sendgrid_api_key),
+                verified: data.sendgrid_api_key_verified || false,
+                verifiedAt: data.sendgrid_api_key_verified_at,
+            },
+        };
+    } catch (err) {
+        console.error('Get email provider settings exception:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Set user's preferred email provider
+ * @param {string} userId - The user's ID
+ * @param {string} provider - 'resend' or 'sendgrid'
+ */
+export async function setEmailProvider(userId, provider) {
+    if (!['resend', 'sendgrid', null].includes(provider)) {
+        return { success: false, error: 'Invalid provider. Must be "resend" or "sendgrid"' };
+    }
+
+    try {
+        const { error } = await supabase
+            .from('profiles')
+            .update({ email_provider: provider })
+            .eq('id', userId);
+
+        if (error) {
+            return { success: false, error: error.message };
+        }
+
+        return { success: true, provider };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Get user's active email provider and API key
+ * @param {string} userId - The user's ID
+ * @returns {Object} - { provider, apiKey } or null
+ */
+export async function getActiveEmailProvider(userId) {
+    try {
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('email_provider, resend_api_key, sendgrid_api_key')
+            .eq('id', userId)
+            .single();
+
+        if (error || !data) {
+            return null;
+        }
+
+        const provider = data.email_provider;
+
+        if (provider === 'sendgrid' && data.sendgrid_api_key) {
+            return { provider: 'sendgrid', apiKey: data.sendgrid_api_key };
+        }
+
+        if (provider === 'resend' && data.resend_api_key) {
+            return { provider: 'resend', apiKey: data.resend_api_key };
+        }
+
+        // Auto-detect: prefer whichever has an API key
+        if (data.resend_api_key) {
+            return { provider: 'resend', apiKey: data.resend_api_key };
+        }
+
+        if (data.sendgrid_api_key) {
+            return { provider: 'sendgrid', apiKey: data.sendgrid_api_key };
+        }
+
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+// =============================================
+// RESEND API KEY MANAGEMENT
+// =============================================
 
 /**
  * Get user's Resend API key (masked for display)
@@ -29,19 +155,10 @@ export async function getResendApiKeyStatus(userId) {
             return { success: false, error: error.message };
         }
 
-        const hasApiKey = !!data.resend_api_key;
-        let maskedKey = null;
-
-        if (hasApiKey && data.resend_api_key.length > 8) {
-            // Show first 6 chars and last 4 chars, mask the rest
-            const key = data.resend_api_key;
-            maskedKey = `${key.substring(0, 6)}${'*'.repeat(key.length - 10)}${key.substring(key.length - 4)}`;
-        }
-
         return {
             success: true,
-            hasApiKey,
-            maskedKey,
+            hasApiKey: !!data.resend_api_key,
+            maskedKey: maskApiKey(data.resend_api_key),
             verified: data.resend_api_key_verified || false,
             verifiedAt: data.resend_api_key_verified_at,
         };
@@ -95,21 +212,20 @@ export async function saveResendApiKey(userId, apiKey) {
         let verified = false;
 
         try {
-            // Try to list domains - this verifies the key works
             const { error: resendError } = await testResend.domains.list();
             verified = !resendError;
         } catch (verifyErr) {
             console.warn('Failed to verify Resend API key:', verifyErr.message);
-            // Still save the key, but mark as not verified
         }
 
-        // Save the API key to the database
+        // Save the API key and set as active provider
         const { error: updateError } = await supabase
             .from('profiles')
             .update({
                 resend_api_key: apiKey,
                 resend_api_key_verified: verified,
                 resend_api_key_verified_at: verified ? new Date().toISOString() : null,
+                email_provider: 'resend', // Auto-set as active provider
             })
             .eq('id', userId);
 
@@ -139,13 +255,27 @@ export async function saveResendApiKey(userId, apiKey) {
  */
 export async function deleteResendApiKey(userId) {
     try {
+        // Check if user has SendGrid configured to fall back to
+        const { data } = await supabase
+            .from('profiles')
+            .select('sendgrid_api_key, email_provider')
+            .eq('id', userId)
+            .single();
+
+        const updates = {
+            resend_api_key: null,
+            resend_api_key_verified: false,
+            resend_api_key_verified_at: null,
+        };
+
+        // If current provider is resend, switch to sendgrid if available, otherwise null
+        if (data?.email_provider === 'resend') {
+            updates.email_provider = data.sendgrid_api_key ? 'sendgrid' : null;
+        }
+
         const { error } = await supabase
             .from('profiles')
-            .update({
-                resend_api_key: null,
-                resend_api_key_verified: false,
-                resend_api_key_verified_at: null,
-            })
+            .update(updates)
             .eq('id', userId);
 
         if (error) {
@@ -168,26 +298,21 @@ export async function deleteResendApiKey(userId) {
  */
 export async function verifyResendApiKey(userId) {
     try {
-        // Get the user's API key
         const apiKey = await getUserResendApiKey(userId);
 
         if (!apiKey) {
             return { success: false, error: 'No Resend API key configured' };
         }
 
-        // Test the API key
         const testResend = new Resend(apiKey);
 
         try {
             const { data: domainsData, error: resendError } = await testResend.domains.list();
 
             if (resendError) {
-                // Update verification status to failed
                 await supabase
                     .from('profiles')
-                    .update({
-                        resend_api_key_verified: false,
-                    })
+                    .update({ resend_api_key_verified: false })
                     .eq('id', userId);
 
                 return {
@@ -196,7 +321,6 @@ export async function verifyResendApiKey(userId) {
                 };
             }
 
-            // Update verification status to success
             await supabase
                 .from('profiles')
                 .update({
@@ -205,7 +329,6 @@ export async function verifyResendApiKey(userId) {
                 })
                 .eq('id', userId);
 
-            // Return verified domains from the user's Resend account
             const verifiedDomains = (domainsData?.data || [])
                 .filter(d => d.status === 'verified')
                 .map(d => ({ id: d.id, name: d.name }));
@@ -250,7 +373,6 @@ export async function getUserResendDomains(userId) {
                 return { success: false, error: resendError.message, domains: [] };
             }
 
-            // Return all domains with their status
             const domains = (domainsData?.data || []).map(d => ({
                 id: d.id,
                 name: d.name,
@@ -268,11 +390,326 @@ export async function getUserResendDomains(userId) {
     }
 }
 
+// =============================================
+// SENDGRID API KEY MANAGEMENT
+// =============================================
+
+/**
+ * Get user's SendGrid API key status (masked for display)
+ * @param {string} userId - The user's ID
+ */
+export async function getSendGridApiKeyStatus(userId) {
+    try {
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('sendgrid_api_key, sendgrid_api_key_verified, sendgrid_api_key_verified_at')
+            .eq('id', userId)
+            .single();
+
+        if (error) {
+            console.error('Failed to get SendGrid settings:', error);
+            return { success: false, error: error.message };
+        }
+
+        return {
+            success: true,
+            hasApiKey: !!data.sendgrid_api_key,
+            maskedKey: maskApiKey(data.sendgrid_api_key),
+            verified: data.sendgrid_api_key_verified || false,
+            verifiedAt: data.sendgrid_api_key_verified_at,
+        };
+    } catch (err) {
+        console.error('Get SendGrid API key status exception:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Get user's actual SendGrid API key (for internal use only)
+ * @param {string} userId - The user's ID
+ */
+export async function getUserSendGridApiKey(userId) {
+    try {
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('sendgrid_api_key')
+            .eq('id', userId)
+            .single();
+
+        if (error || !data) {
+            return null;
+        }
+
+        return data.sendgrid_api_key || null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Save user's SendGrid API key
+ * @param {string} userId - The user's ID
+ * @param {string} apiKey - The SendGrid API key
+ */
+export async function saveSendGridApiKey(userId, apiKey) {
+    try {
+        // Validate the API key format (SendGrid keys start with 'SG.')
+        if (!apiKey || !apiKey.startsWith('SG.')) {
+            return {
+                success: false,
+                error: 'Invalid API key format. SendGrid API keys start with "SG."'
+            };
+        }
+
+        // Verify the API key works by checking scopes
+        let verified = false;
+
+        try {
+            sgMail.setApiKey(apiKey);
+            // SendGrid doesn't have a simple "list domains" like Resend
+            // We'll verify by checking API key scopes
+            const response = await fetch('https://api.sendgrid.com/v3/scopes', {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            verified = response.ok;
+
+            if (!verified) {
+                const errorData = await response.json().catch(() => ({}));
+                console.warn('SendGrid API key verification failed:', errorData);
+            }
+        } catch (verifyErr) {
+            console.warn('Failed to verify SendGrid API key:', verifyErr.message);
+        }
+
+        // Save the API key and set as active provider
+        const { error: updateError } = await supabase
+            .from('profiles')
+            .update({
+                sendgrid_api_key: apiKey,
+                sendgrid_api_key_verified: verified,
+                sendgrid_api_key_verified_at: verified ? new Date().toISOString() : null,
+                email_provider: 'sendgrid', // Auto-set as active provider
+            })
+            .eq('id', userId);
+
+        if (updateError) {
+            console.error('Failed to save SendGrid API key:', updateError);
+            return { success: false, error: updateError.message };
+        }
+
+        console.log(`SendGrid API key saved for user ${userId}, verified: ${verified}`);
+        return {
+            success: true,
+            verified,
+            message: verified
+                ? 'API key saved and verified successfully!'
+                : 'API key saved but could not be verified. Please check your key is correct.'
+        };
+    } catch (err) {
+        console.error('Save SendGrid API key exception:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Delete user's SendGrid API key
+ * @param {string} userId - The user's ID
+ */
+export async function deleteSendGridApiKey(userId) {
+    try {
+        // Check if user has Resend configured to fall back to
+        const { data } = await supabase
+            .from('profiles')
+            .select('resend_api_key, email_provider')
+            .eq('id', userId)
+            .single();
+
+        const updates = {
+            sendgrid_api_key: null,
+            sendgrid_api_key_verified: false,
+            sendgrid_api_key_verified_at: null,
+        };
+
+        // If current provider is sendgrid, switch to resend if available, otherwise null
+        if (data?.email_provider === 'sendgrid') {
+            updates.email_provider = data.resend_api_key ? 'resend' : null;
+        }
+
+        const { error } = await supabase
+            .from('profiles')
+            .update(updates)
+            .eq('id', userId);
+
+        if (error) {
+            console.error('Failed to delete SendGrid API key:', error);
+            return { success: false, error: error.message };
+        }
+
+        console.log(`SendGrid API key deleted for user ${userId}`);
+        return { success: true };
+    } catch (err) {
+        console.error('Delete SendGrid API key exception:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Verify user's SendGrid API key works
+ * @param {string} userId - The user's ID
+ */
+export async function verifySendGridApiKey(userId) {
+    try {
+        const apiKey = await getUserSendGridApiKey(userId);
+
+        if (!apiKey) {
+            return { success: false, error: 'No SendGrid API key configured' };
+        }
+
+        try {
+            // Verify by checking API scopes
+            const response = await fetch('https://api.sendgrid.com/v3/scopes', {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            if (!response.ok) {
+                await supabase
+                    .from('profiles')
+                    .update({ sendgrid_api_key_verified: false })
+                    .eq('id', userId);
+
+                return {
+                    success: false,
+                    error: 'API key verification failed. Please check your key is correct.'
+                };
+            }
+
+            await supabase
+                .from('profiles')
+                .update({
+                    sendgrid_api_key_verified: true,
+                    sendgrid_api_key_verified_at: new Date().toISOString(),
+                })
+                .eq('id', userId);
+
+            // Get verified sender identities
+            const sendersResponse = await fetch('https://api.sendgrid.com/v3/verified_senders', {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            let senders = [];
+            if (sendersResponse.ok) {
+                const sendersData = await sendersResponse.json();
+                senders = (sendersData.results || []).map(s => ({
+                    id: s.id,
+                    email: s.from_email,
+                    name: s.from_name,
+                    verified: s.verified,
+                }));
+            }
+
+            return {
+                success: true,
+                verified: true,
+                senders,
+                message: `API key verified! Found ${senders.length} verified sender(s).`
+            };
+        } catch (verifyErr) {
+            return {
+                success: false,
+                error: `Failed to verify API key: ${verifyErr.message}`
+            };
+        }
+    } catch (err) {
+        console.error('Verify SendGrid API key exception:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Get user's verified senders from their SendGrid account
+ * @param {string} userId - The user's ID
+ */
+export async function getUserSendGridSenders(userId) {
+    try {
+        const apiKey = await getUserSendGridApiKey(userId);
+
+        if (!apiKey) {
+            return { success: false, error: 'No SendGrid API key configured', senders: [] };
+        }
+
+        try {
+            const response = await fetch('https://api.sendgrid.com/v3/verified_senders', {
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            if (!response.ok) {
+                return { success: false, error: 'Failed to fetch senders', senders: [] };
+            }
+
+            const data = await response.json();
+            const senders = (data.results || []).map(s => ({
+                id: s.id,
+                email: s.from_email,
+                name: s.from_name,
+                verified: s.verified,
+            }));
+
+            return { success: true, senders };
+        } catch (err) {
+            return { success: false, error: err.message, senders: [] };
+        }
+    } catch (err) {
+        console.error('Get user SendGrid senders exception:', err);
+        return { success: false, error: err.message, senders: [] };
+    }
+}
+
+// =============================================
+// HELPER FUNCTIONS
+// =============================================
+
+/**
+ * Mask an API key for display
+ * @param {string} apiKey - The API key to mask
+ * @returns {string|null} - Masked key or null
+ */
+function maskApiKey(apiKey) {
+    if (!apiKey || apiKey.length < 10) {
+        return null;
+    }
+    return `${apiKey.substring(0, 6)}${'*'.repeat(Math.min(apiKey.length - 10, 20))}${apiKey.substring(apiKey.length - 4)}`;
+}
+
 export default {
+    // Provider settings
+    getEmailProviderSettings,
+    setEmailProvider,
+    getActiveEmailProvider,
+    // Resend
     getResendApiKeyStatus,
     getUserResendApiKey,
     saveResendApiKey,
     deleteResendApiKey,
     verifyResendApiKey,
     getUserResendDomains,
+    // SendGrid
+    getSendGridApiKeyStatus,
+    getUserSendGridApiKey,
+    saveSendGridApiKey,
+    deleteSendGridApiKey,
+    verifySendGridApiKey,
+    getUserSendGridSenders,
 };

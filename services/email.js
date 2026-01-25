@@ -1,13 +1,15 @@
 /**
- * Email Service using Resend
+ * Email Service - Multi-Provider Support
  * Handles all transactional email sending for ValidateCall
  *
- * For cold emails, users can provide their own Resend API key to send
- * from their own verified domains.
+ * Supports: Resend, SendGrid
+ * For cold emails, users can provide their own API key to send
+ * from their own verified domains/senders.
  */
 
 import { Resend } from 'resend';
-import { getUserResendApiKey } from './userSettings.js';
+import sgMail from '@sendgrid/mail';
+import { getUserResendApiKey, getActiveEmailProvider } from './userSettings.js';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
@@ -27,6 +29,77 @@ async function getResendClient(userId = null) {
 
     // Fall back to platform default
     return resend;
+}
+
+/**
+ * Get the email provider configuration for a user
+ * @param {string} userId - User ID
+ * @returns {Object} - { provider: 'resend'|'sendgrid'|null, apiKey, client }
+ */
+async function getEmailProviderConfig(userId) {
+    if (!userId) {
+        return { provider: 'resend', client: resend, apiKey: null };
+    }
+
+    const providerConfig = await getActiveEmailProvider(userId);
+
+    if (!providerConfig) {
+        // Fall back to platform default
+        return { provider: 'resend', client: resend, apiKey: null };
+    }
+
+    if (providerConfig.provider === 'sendgrid') {
+        return {
+            provider: 'sendgrid',
+            apiKey: providerConfig.apiKey,
+            client: null, // SendGrid uses a different pattern
+        };
+    }
+
+    if (providerConfig.provider === 'resend') {
+        return {
+            provider: 'resend',
+            apiKey: providerConfig.apiKey,
+            client: new Resend(providerConfig.apiKey),
+        };
+    }
+
+    return { provider: 'resend', client: resend, apiKey: null };
+}
+
+/**
+ * Send email via SendGrid
+ * @param {string} apiKey - SendGrid API key
+ * @param {Object} emailData - Email data
+ */
+async function sendViaSendGrid(apiKey, { from, to, replyTo, subject, html, text }) {
+    sgMail.setApiKey(apiKey);
+
+    const msg = {
+        to,
+        from, // Can be email string or { email, name } object
+        replyTo,
+        subject,
+        html,
+        text,
+    };
+
+    try {
+        const [response] = await sgMail.send(msg);
+        return {
+            success: true,
+            emailId: response.headers['x-message-id'],
+        };
+    } catch (err) {
+        console.error('SendGrid send error:', err);
+        if (err.response) {
+            console.error('SendGrid error body:', err.response.body);
+        }
+        return {
+            success: false,
+            error: err.message || 'Failed to send via SendGrid',
+        };
+    }
 }
 
 const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || 'ValidateCall <noreply@validatecall.com>';
@@ -359,46 +432,71 @@ Questions? Contact support@validatecall.com
 
 /**
  * Send cold email to a lead
- * @param {string} userId - User ID (to use their Resend API key if available)
- * @param {string} fromEmail - Custom sender email (requires verified domain in user's Resend account)
+ * Supports both Resend and SendGrid based on user's settings
+ * @param {string} userId - User ID (to use their email provider settings)
+ * @param {string} fromEmail - Custom sender email (requires verified domain/sender)
  */
 export async function sendColdEmail({ userId, toEmail, toName, subject, htmlContent, textContent, fromName, fromEmail }) {
-    // Get the appropriate Resend client (user's or platform default)
-    const resendClient = await getResendClient(userId);
+    // Get the user's email provider configuration
+    const providerConfig = await getEmailProviderConfig(userId);
 
-    if (!resendClient) {
-        console.warn('No Resend API key available - skipping cold email');
-        return { success: false, error: 'Email service not configured. Please add your Resend API key in Settings.' };
+    // Build the from address
+    let fromAddress;
+    if (fromEmail) {
+        // Custom sender email provided - use it with optional display name
+        fromAddress = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
+    } else if (fromName) {
+        // Only display name provided - use default email
+        const defaultEmail = process.env.EMAIL_FROM_ADDRESS?.match(/<(.+)>/)?.[1] || 'noreply@validatecall.com';
+        fromAddress = `${fromName} <${defaultEmail}>`;
+    } else {
+        // Use full default FROM_ADDRESS
+        fromAddress = FROM_ADDRESS;
     }
 
-    try {
-        // Build the from address
-        // If custom fromEmail is provided (and domain is verified in Resend), use it
-        // Otherwise fall back to default
-        let fromAddress;
-        if (fromEmail) {
-            // Custom sender email provided - use it with optional display name
-            fromAddress = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
-        } else if (fromName) {
-            // Only display name provided - use default email
-            const defaultEmail = process.env.EMAIL_FROM_ADDRESS?.match(/<(.+)>/)?.[1] || 'noreply@validatecall.com';
-            fromAddress = `${fromName} <${defaultEmail}>`;
-        } else {
-            // Use full default FROM_ADDRESS
-            fromAddress = FROM_ADDRESS;
-        }
+    const replyToAddress = fromEmail || REPLY_TO;
 
+    // Send via the appropriate provider
+    if (providerConfig.provider === 'sendgrid' && providerConfig.apiKey) {
+        console.log(`Sending cold email via SendGrid to ${toEmail} from ${fromAddress}`);
+
+        const result = await sendViaSendGrid(providerConfig.apiKey, {
+            from: fromAddress,
+            to: toEmail,
+            replyTo: replyToAddress,
+            subject,
+            html: htmlContent,
+            text: textContent,
+        });
+
+        if (result.success) {
+            console.log(`Cold email sent via SendGrid to ${toEmail}, id: ${result.emailId}`);
+        }
+        return result;
+    }
+
+    // Default to Resend
+    const resendClient = providerConfig.client || resend;
+
+    if (!resendClient) {
+        console.warn('No email provider configured - skipping cold email');
+        return { success: false, error: 'Email service not configured. Please add your API key in Settings.' };
+    }
+
+    console.log(`Sending cold email via Resend to ${toEmail} from ${fromAddress}`);
+
+    try {
         const { data, error } = await resendClient.emails.send({
             from: fromAddress,
             to: toEmail,
-            replyTo: fromEmail || REPLY_TO, // Reply to custom email if provided
+            replyTo: replyToAddress,
             subject: subject,
             html: htmlContent,
             text: textContent,
         });
 
         if (error) {
-            console.error('Failed to send cold email:', error);
+            console.error('Failed to send cold email via Resend:', error);
             // Check if it's a domain verification error
             if (error.message?.includes('domain') || error.message?.includes('verified')) {
                 return {
@@ -409,7 +507,7 @@ export async function sendColdEmail({ userId, toEmail, toName, subject, htmlCont
             return { success: false, error: error.message };
         }
 
-        console.log(`Cold email sent to ${toEmail} from ${fromAddress}, id: ${data.id}`);
+        console.log(`Cold email sent via Resend to ${toEmail}, id: ${data.id}`);
         return { success: true, emailId: data.id };
     } catch (err) {
         console.error('Cold email exception:', err);
