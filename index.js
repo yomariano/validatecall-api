@@ -12,6 +12,8 @@ import usageRoutes from './routes/usage.js';
 import emailRoutes from './routes/email.js';
 import domainsRoutes from './routes/domains.js';
 import adminRoutes from './routes/admin.js';
+import resendWebhookRoutes from './routes/resendWebhook.js';
+import userSettingsRoutes from './routes/userSettings.js';
 
 // Import services
 import callScheduler from './services/callScheduler.js';
@@ -42,6 +44,9 @@ app.use(cors({
 // Stripe webhook needs raw body for signature verification
 // Must be before express.json() middleware
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+
+// Resend webhook also needs raw body for signature verification
+app.use('/api/resend/webhook', express.raw({ type: 'application/json' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -81,6 +86,8 @@ app.use('/api/usage', usageRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/domains', domainsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/resend', resendWebhookRoutes);
+app.use('/api/settings', userSettingsRoutes);
 
 // 404 handler
 app.use((req, res) => {

@@ -1,11 +1,33 @@
 /**
  * Email Service using Resend
  * Handles all transactional email sending for ValidateCall
+ *
+ * For cold emails, users can provide their own Resend API key to send
+ * from their own verified domains.
  */
 
 import { Resend } from 'resend';
+import { getUserResendApiKey } from './userSettings.js';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+/**
+ * Get a Resend client - either the user's or the platform default
+ * @param {string} userId - Optional user ID to get their API key
+ * @returns {Resend|null} - Resend client or null if not configured
+ */
+async function getResendClient(userId = null) {
+    // If userId provided, try to use their API key first
+    if (userId) {
+        const userApiKey = await getUserResendApiKey(userId);
+        if (userApiKey) {
+            return new Resend(userApiKey);
+        }
+    }
+
+    // Fall back to platform default
+    return resend;
+}
 
 const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || 'ValidateCall <noreply@validatecall.com>';
 const REPLY_TO = process.env.EMAIL_REPLY_TO || 'support@validatecall.com';
@@ -337,12 +359,16 @@ Questions? Contact support@validatecall.com
 
 /**
  * Send cold email to a lead
- * @param {string} fromEmail - Custom sender email (requires verified domain in Resend)
+ * @param {string} userId - User ID (to use their Resend API key if available)
+ * @param {string} fromEmail - Custom sender email (requires verified domain in user's Resend account)
  */
-export async function sendColdEmail({ toEmail, toName, subject, htmlContent, textContent, fromName, fromEmail }) {
-    if (!resend) {
-        console.warn('RESEND_API_KEY not set - skipping cold email');
-        return { success: false, error: 'Email service not configured' };
+export async function sendColdEmail({ userId, toEmail, toName, subject, htmlContent, textContent, fromName, fromEmail }) {
+    // Get the appropriate Resend client (user's or platform default)
+    const resendClient = await getResendClient(userId);
+
+    if (!resendClient) {
+        console.warn('No Resend API key available - skipping cold email');
+        return { success: false, error: 'Email service not configured. Please add your Resend API key in Settings.' };
     }
 
     try {
@@ -362,7 +388,7 @@ export async function sendColdEmail({ toEmail, toName, subject, htmlContent, tex
             fromAddress = FROM_ADDRESS;
         }
 
-        const { data, error } = await resend.emails.send({
+        const { data, error } = await resendClient.emails.send({
             from: fromAddress,
             to: toEmail,
             replyTo: fromEmail || REPLY_TO, // Reply to custom email if provided
@@ -377,7 +403,7 @@ export async function sendColdEmail({ toEmail, toName, subject, htmlContent, tex
             if (error.message?.includes('domain') || error.message?.includes('verified')) {
                 return {
                     success: false,
-                    error: `Domain not verified: ${fromEmail}. Please verify your domain in Resend dashboard first.`
+                    error: `Domain not verified: ${fromEmail}. Please verify your domain in your Resend dashboard first.`
                 };
             }
             return { success: false, error: error.message };

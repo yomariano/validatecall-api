@@ -1,12 +1,31 @@
 /**
  * Domain Verification Service using Resend
  * Handles domain management for custom email sending
+ *
+ * If users have their own Resend API key, domains are managed in their account.
+ * Otherwise, domains are managed in the platform's Resend account.
  */
 
 import { Resend } from 'resend';
 import { createClient } from '@supabase/supabase-js';
+import { getUserResendApiKey } from './userSettings.js';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+/**
+ * Get a Resend client for a user - either their own or the platform default
+ * @param {string} userId - User ID
+ * @returns {Promise<{client: Resend|null, isUserOwned: boolean}>}
+ */
+async function getResendClientForUser(userId) {
+    if (userId) {
+        const userApiKey = await getUserResendApiKey(userId);
+        if (userApiKey) {
+            return { client: new Resend(userApiKey), isUserOwned: true };
+        }
+    }
+    return { client: resend, isUserOwned: false };
+}
 
 const supabase = createClient(
     process.env.SUPABASE_URL,
@@ -18,6 +37,16 @@ const supabase = createClient(
  */
 export function isConfigured() {
     return !!process.env.RESEND_API_KEY;
+}
+
+/**
+ * Check if user has their own Resend API key configured
+ * @param {string} userId - The user's ID
+ * @returns {Promise<boolean>}
+ */
+export async function userHasOwnResendKey(userId) {
+    const apiKey = await getUserResendApiKey(userId);
+    return !!apiKey;
 }
 
 /**
@@ -41,12 +70,17 @@ function mapResendStatus(resendStatus) {
 
 /**
  * Create a new domain for verification
+ * If user has their own Resend API key, the domain is created in their Resend account.
+ * Otherwise, it's created in the platform's Resend account.
  * @param {string} userId - The user's ID
  * @param {string} domainName - The domain to verify (e.g., "abc.com")
  */
 export async function createDomain(userId, domainName) {
-    if (!resend) {
-        return { success: false, error: 'Email service not configured' };
+    // Get the appropriate Resend client for this user
+    const { client: resendClient, isUserOwned } = await getResendClientForUser(userId);
+
+    if (!resendClient) {
+        return { success: false, error: 'Email service not configured. Please add your Resend API key in Settings.' };
     }
 
     // Normalize domain name (lowercase, remove any protocol/path)
@@ -68,8 +102,8 @@ export async function createDomain(userId, domainName) {
             };
         }
 
-        // Create domain in Resend
-        const { data: resendDomain, error: resendError } = await resend.domains.create({
+        // Create domain in Resend (user's account or platform account)
+        const { data: resendDomain, error: resendError } = await resendClient.domains.create({
             name: normalizedDomain,
         });
 
@@ -87,6 +121,7 @@ export async function createDomain(userId, domainName) {
                 resend_domain_id: resendDomain.id,
                 status: mapResendStatus(resendDomain.status),
                 dns_records: resendDomain.records || [],
+                is_user_owned: isUserOwned, // Track if domain is in user's Resend account
             })
             .select()
             .single();
@@ -95,7 +130,7 @@ export async function createDomain(userId, domainName) {
             console.error('Database insert error:', dbError);
             // Try to clean up Resend domain
             try {
-                await resend.domains.remove(resendDomain.id);
+                await resendClient.domains.remove(resendDomain.id);
             } catch (cleanupErr) {
                 console.error('Failed to cleanup Resend domain:', cleanupErr);
             }
@@ -196,8 +231,11 @@ export async function getDomain(userId, domainId) {
  * @param {string} domainId - The domain's ID
  */
 export async function verifyDomain(userId, domainId) {
-    if (!resend) {
-        return { success: false, error: 'Email service not configured' };
+    // Get the appropriate Resend client for this user
+    const { client: resendClient } = await getResendClientForUser(userId);
+
+    if (!resendClient) {
+        return { success: false, error: 'Email service not configured. Please add your Resend API key in Settings.' };
     }
 
     try {
@@ -218,7 +256,7 @@ export async function verifyDomain(userId, domainId) {
         }
 
         // Trigger verification in Resend
-        const { data: verifyResult, error: verifyError } = await resend.domains.verify(dbDomain.resend_domain_id);
+        const { data: verifyResult, error: verifyError } = await resendClient.domains.verify(dbDomain.resend_domain_id);
 
         if (verifyError) {
             console.error('Resend verify error:', verifyError);
@@ -226,7 +264,7 @@ export async function verifyDomain(userId, domainId) {
         }
 
         // Get updated status from Resend
-        const { data: resendDomain, error: getError } = await resend.domains.get(dbDomain.resend_domain_id);
+        const { data: resendDomain, error: getError } = await resendClient.domains.get(dbDomain.resend_domain_id);
 
         if (getError) {
             console.error('Failed to get domain status:', getError);
@@ -291,10 +329,13 @@ export async function deleteDomain(userId, domainId) {
             return { success: false, error: 'Domain not found' };
         }
 
-        // Delete from Resend if we have an ID
-        if (resend && dbDomain.resend_domain_id) {
+        // Get the appropriate Resend client for this user
+        const { client: resendClient } = await getResendClientForUser(userId);
+
+        // Delete from Resend if we have an ID and a client
+        if (resendClient && dbDomain.resend_domain_id) {
             try {
-                await resend.domains.remove(dbDomain.resend_domain_id);
+                await resendClient.domains.remove(dbDomain.resend_domain_id);
             } catch (resendErr) {
                 console.warn('Failed to delete domain from Resend:', resendErr);
                 // Continue with database deletion anyway

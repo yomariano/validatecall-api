@@ -279,8 +279,9 @@ router.post('/send-cold-email', async (req, res) => {
             senderCompany,
         });
 
-        // Send the email
+        // Send the email (pass userId to use their Resend API key if available)
         const result = await sendColdEmail({
+            userId,
             toEmail,
             toName,
             subject,
@@ -409,6 +410,255 @@ router.post('/track-event', async (req, res) => {
         console.error('Track event error:', error);
         // Don't fail - event tracking is non-critical
         res.json({ success: true });
+    }
+});
+
+/**
+ * GET /api/email/responses
+ * Get all email responses for the authenticated user
+ * Query: ?status=unread|read|all (default: all)
+ */
+router.get('/responses', async (req, res) => {
+    try {
+        const userId = req.headers['x-user-id'];
+        if (!userId) {
+            return res.status(401).json({ error: 'User ID required' });
+        }
+
+        const status = req.query.status || 'all';
+
+        let query = supabase
+            .from('email_responses')
+            .select(`
+                *,
+                lead:leads(id, name, email, status)
+            `)
+            .eq('user_id', userId)
+            .order('received_at', { ascending: false });
+
+        if (status !== 'all') {
+            query = query.eq('status', status);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error('Failed to fetch email responses:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json({ responses: data });
+    } catch (error) {
+        console.error('Email responses error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/email/responses/unread-count
+ * Get count of unread email responses
+ */
+router.get('/responses/unread-count', async (req, res) => {
+    try {
+        const userId = req.headers['x-user-id'];
+        if (!userId) {
+            return res.status(401).json({ error: 'User ID required' });
+        }
+
+        const { count, error } = await supabase
+            .from('email_responses')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('status', 'unread');
+
+        if (error) {
+            console.error('Failed to count unread responses:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json({ unreadCount: count || 0 });
+    } catch (error) {
+        console.error('Unread count error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/email/thread/:leadId
+ * Get complete email thread for a lead (sent + received)
+ */
+router.get('/thread/:leadId', async (req, res) => {
+    try {
+        const userId = req.headers['x-user-id'];
+        const { leadId } = req.params;
+
+        if (!userId) {
+            return res.status(401).json({ error: 'User ID required' });
+        }
+
+        // Get sent emails to this lead
+        const { data: sentEmails, error: sentError } = await supabase
+            .from('email_logs')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('email_type', 'cold_email')
+            .contains('metadata', { leadId })
+            .order('created_at', { ascending: true });
+
+        if (sentError) {
+            console.error('Failed to fetch sent emails:', sentError);
+        }
+
+        // Get received emails from this lead
+        const { data: receivedEmails, error: receivedError } = await supabase
+            .from('email_responses')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('lead_id', leadId)
+            .order('received_at', { ascending: true });
+
+        if (receivedError) {
+            console.error('Failed to fetch received emails:', receivedError);
+        }
+
+        // Combine and sort by timestamp
+        const thread = [
+            ...(sentEmails || []).map(e => ({
+                id: e.id,
+                direction: 'sent',
+                subject: e.metadata?.subject,
+                body: e.metadata?.body,
+                timestamp: e.created_at,
+                status: e.status
+            })),
+            ...(receivedEmails || []).map(e => ({
+                id: e.id,
+                direction: 'received',
+                subject: e.subject,
+                body: e.body_text || e.body_html,
+                from: e.from_email,
+                fromName: e.from_name,
+                timestamp: e.received_at,
+                status: e.status,
+                attachments: e.attachments
+            }))
+        ].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        res.json({ thread });
+    } catch (error) {
+        console.error('Email thread error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PATCH /api/email/responses/:id/read
+ * Mark an email response as read
+ */
+router.patch('/responses/:id/read', async (req, res) => {
+    try {
+        const userId = req.headers['x-user-id'];
+        const { id } = req.params;
+
+        if (!userId) {
+            return res.status(401).json({ error: 'User ID required' });
+        }
+
+        const { data, error } = await supabase
+            .from('email_responses')
+            .update({
+                status: 'read',
+                read_at: new Date().toISOString()
+            })
+            .eq('id', id)
+            .eq('user_id', userId)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Failed to mark as read:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json({ response: data });
+    } catch (error) {
+        console.error('Mark as read error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/email/responses/:id/reply
+ * Reply to an email response
+ */
+router.post('/responses/:id/reply', async (req, res) => {
+    try {
+        const userId = req.headers['x-user-id'];
+        const { id } = req.params;
+        const { subject, body, senderName, senderEmail, senderCompany } = req.body;
+
+        if (!userId) {
+            return res.status(401).json({ error: 'User ID required' });
+        }
+
+        // Get the original email response
+        const { data: originalResponse, error: fetchError } = await supabase
+            .from('email_responses')
+            .select('*')
+            .eq('id', id)
+            .eq('user_id', userId)
+            .single();
+
+        if (fetchError || !originalResponse) {
+            return res.status(404).json({ error: 'Email response not found' });
+        }
+
+        // Generate reply HTML
+        const htmlContent = generateColdEmailHtml({
+            subject,
+            body,
+            senderName,
+            senderCompany,
+        });
+
+        // Send the reply (pass userId to use their Resend API key if available)
+        const result = await sendColdEmail({
+            userId,
+            toEmail: originalResponse.from_email,
+            toName: originalResponse.from_name,
+            subject: subject.startsWith('Re:') ? subject : `Re: ${originalResponse.subject}`,
+            htmlContent,
+            textContent: body + `\n\nBest regards,\n${senderName || 'The Team'}${senderCompany ? `\n${senderCompany}` : ''}`,
+            fromName: senderName,
+            fromEmail: senderEmail,
+        });
+
+        if (result.success) {
+            // Log the reply email
+            await supabase.from('email_logs').insert({
+                user_id: userId,
+                email_type: 'cold_email',
+                recipient: originalResponse.from_email,
+                resend_id: result.emailId,
+                status: 'sent',
+                metadata: {
+                    leadId: originalResponse.lead_id,
+                    subject: subject.startsWith('Re:') ? subject : `Re: ${originalResponse.subject}`,
+                    inReplyTo: originalResponse.resend_email_id
+                },
+            });
+
+            // Update original response status
+            await supabase
+                .from('email_responses')
+                .update({ status: 'replied' })
+                .eq('id', id);
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Reply email error:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
