@@ -14,10 +14,15 @@ import domainsRoutes from './routes/domains.js';
 import adminRoutes from './routes/admin.js';
 import resendWebhookRoutes from './routes/resendWebhook.js';
 import userSettingsRoutes from './routes/userSettings.js';
+import sequencesRoutes from './routes/sequences.js';
+import emailTrackingRoutes from './routes/emailTracking.js';
+import workflowsRoutes from './routes/workflows.js';
 
 // Import services
 import callScheduler from './services/callScheduler.js';
 import triggerEngine from './services/triggerEngine.js';
+import emailSequenceScheduler from './services/emailSequenceScheduler.js';
+import workflowScheduler from './services/workflowScheduler.js';
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -71,6 +76,8 @@ app.get('/health', (req, res) => {
             resend: !!process.env.RESEND_API_KEY,
             scheduler: true,
             triggerEngine: true,
+            emailSequenceScheduler: true,
+            workflowScheduler: true,
         }
     });
 });
@@ -88,6 +95,9 @@ app.use('/api/domains', domainsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/resend', resendWebhookRoutes);
 app.use('/api/settings', userSettingsRoutes);
+app.use('/api/sequences', sequencesRoutes);
+app.use('/api/email-tracking', emailTrackingRoutes);
+app.use('/api/workflows', workflowsRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -112,4 +122,10 @@ app.listen(PORT, () => {
 
     // Start the trigger engine (automated marketing emails)
     triggerEngine.start();
+
+    // Start the email sequence scheduler (cold email automation)
+    emailSequenceScheduler.start();
+
+    // Start the multi-channel workflow scheduler (email + calls + SMS)
+    workflowScheduler.start();
 });

@@ -560,7 +560,7 @@ router.post('/campaigns', async (req, res) => {
 
         const {
             name, productIdea, companyContext, totalLeads, leadIds, selectedAgentId,
-            senderName, senderEmail, emailSubject, emailBody
+            senderName, senderEmail, emailSubject, emailBody, ctaText, ctaUrl
         } = req.body;
 
         const { data, error } = await supabase
@@ -577,6 +577,8 @@ router.post('/campaigns', async (req, res) => {
                 sender_email: senderEmail || null,
                 email_subject: emailSubject || null,
                 email_body: emailBody || null,
+                cta_text: ctaText || null,
+                cta_url: ctaUrl || null,
             })
             .select()
             .single();

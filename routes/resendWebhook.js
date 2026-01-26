@@ -13,6 +13,8 @@ import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 import crypto from 'crypto';
+import { recordTrackingEvent, processUnsubscribe } from '../services/emailTracking.js';
+import emailSequenceScheduler from '../services/emailSequenceScheduler.js';
 
 const router = Router();
 
@@ -184,6 +186,14 @@ router.post('/webhook', async (req, res) => {
                 await handleEmailDelivered(event.data);
                 break;
 
+            case 'email.opened':
+                await handleEmailOpened(event.data);
+                break;
+
+            case 'email.clicked':
+                await handleEmailClicked(event.data);
+                break;
+
             default:
                 console.log(`Unhandled event type: ${eventType}`);
         }
@@ -282,11 +292,34 @@ async function handleEmailReceived(data) {
             .from('leads')
             .update({
                 status: 'interested', // They replied, so they're interested
+                email_status: 'replied',
+                last_replied_at: new Date().toISOString(),
                 notes: `Email reply received: ${subject}`
             })
             .eq('id', leadId);
 
         console.log(`[Resend] Updated lead ${leadId} status to interested`);
+    }
+
+    // Stop any active sequences for this lead (reply = stop condition)
+    if (leadId && userId) {
+        const { data: enrollments } = await supabase
+            .from('email_sequence_enrollments')
+            .select('id, sequence_id')
+            .eq('lead_id', leadId)
+            .eq('user_id', userId)
+            .eq('status', 'active');
+
+        for (const enrollment of (enrollments || [])) {
+            await emailSequenceScheduler.handleStopCondition(enrollment.id, 'reply');
+
+            // Update sequence reply count
+            await supabase.rpc('increment_sequence_stats', {
+                p_sequence_id: enrollment.sequence_id,
+                p_stat_name: 'total_replies',
+                p_increment: 1
+            }).catch(() => {});
+        }
     }
 
     return response;
@@ -301,11 +334,47 @@ async function handleEmailBounced(data) {
     const { email_id, to } = data;
     const recipientEmail = Array.isArray(to) ? to[0] : to;
 
-    // Update email log status
-    await supabase
+    // Update email log status and get tracking info
+    const { data: emailLog } = await supabase
         .from('email_logs')
-        .update({ status: 'bounced' })
-        .eq('resend_id', email_id);
+        .update({
+            status: 'bounced',
+            bounced_at: new Date().toISOString()
+        })
+        .eq('resend_id', email_id)
+        .select('tracking_id, enrollment_id, sequence_id, step_number')
+        .single();
+
+    // Record tracking event
+    if (emailLog?.tracking_id) {
+        await recordTrackingEvent({
+            trackingId: emailLog.tracking_id,
+            eventType: 'bounce',
+        });
+    }
+
+    // Check stop conditions for bounce (stop sequence)
+    if (emailLog?.enrollment_id) {
+        await emailSequenceScheduler.handleStopCondition(emailLog.enrollment_id, 'bounce');
+    }
+
+    // Update sequence/step bounce stats
+    if (emailLog?.sequence_id) {
+        await supabase.rpc('increment_sequence_stats', {
+            p_sequence_id: emailLog.sequence_id,
+            p_stat_name: 'total_bounces',
+            p_increment: 1
+        }).catch(() => {});
+
+        if (emailLog.step_number) {
+            await supabase.rpc('increment_step_stats', {
+                p_sequence_id: emailLog.sequence_id,
+                p_step_number: emailLog.step_number,
+                p_stat_name: 'bounces',
+                p_increment: 1
+            }).catch(() => {});
+        }
+    }
 
     // Find and update lead status
     const { data: lead } = await supabase
@@ -317,7 +386,11 @@ async function handleEmailBounced(data) {
     if (lead) {
         await supabase
             .from('leads')
-            .update({ status: 'invalid', notes: 'Email bounced' })
+            .update({
+                status: 'invalid',
+                email_status: 'bounced',
+                notes: 'Email bounced'
+            })
             .eq('id', lead.id);
     }
 }
@@ -358,11 +431,76 @@ async function handleEmailComplained(data) {
 async function handleEmailDelivered(data) {
     console.log('[Resend] Email delivered:', data.email_id);
 
-    // Update email log status
-    await supabase
+    // Update email log status and delivered_at
+    const { data: emailLog } = await supabase
         .from('email_logs')
-        .update({ status: 'delivered' })
-        .eq('resend_id', data.email_id);
+        .update({
+            status: 'delivered',
+            delivered_at: new Date().toISOString()
+        })
+        .eq('resend_id', data.email_id)
+        .select('tracking_id, enrollment_id')
+        .single();
+
+    // Record tracking event if we have a tracking_id
+    if (emailLog?.tracking_id) {
+        await recordTrackingEvent({
+            trackingId: emailLog.tracking_id,
+            eventType: 'delivered',
+        });
+    }
+}
+
+/**
+ * Handle email opened (from Resend's open tracking)
+ */
+async function handleEmailOpened(data) {
+    console.log('[Resend] Email opened:', data.email_id);
+
+    // Get email log to find tracking_id
+    const { data: emailLog } = await supabase
+        .from('email_logs')
+        .select('tracking_id, enrollment_id')
+        .eq('resend_id', data.email_id)
+        .single();
+
+    if (emailLog?.tracking_id) {
+        await recordTrackingEvent({
+            trackingId: emailLog.tracking_id,
+            eventType: 'open',
+            userAgent: data.user_agent,
+            ipAddress: data.ip_address,
+        });
+    }
+}
+
+/**
+ * Handle email clicked (from Resend's click tracking)
+ */
+async function handleEmailClicked(data) {
+    console.log('[Resend] Email clicked:', data.email_id, data.link);
+
+    // Get email log to find tracking_id
+    const { data: emailLog } = await supabase
+        .from('email_logs')
+        .select('tracking_id, enrollment_id')
+        .eq('resend_id', data.email_id)
+        .single();
+
+    if (emailLog?.tracking_id) {
+        const event = await recordTrackingEvent({
+            trackingId: emailLog.tracking_id,
+            eventType: 'click',
+            url: data.link,
+            userAgent: data.user_agent,
+            ipAddress: data.ip_address,
+        });
+
+        // Check stop conditions for click
+        if (event?.enrollment_id) {
+            await emailSequenceScheduler.handleStopCondition(event.enrollment_id, 'click');
+        }
+    }
 }
 
 /**

@@ -297,7 +297,7 @@ Return your response in this EXACT JSON format (no markdown, no explanation):
  */
 router.post('/send-cold-email', async (req, res) => {
     try {
-        const { leadId, toEmail, toName, subject, body, senderName, senderEmail, senderCompany, userId } = req.body;
+        const { leadId, toEmail, toName, subject, body, senderName, senderEmail, senderCompany, userId, ctaText, ctaUrl } = req.body;
 
         if (!toEmail || !subject || !body) {
             return res.status(400).json({ error: 'toEmail, subject, and body are required' });
@@ -318,6 +318,10 @@ router.post('/send-cold-email', async (req, res) => {
             }
         }
 
+        // Per-campaign CTA overrides global brand settings
+        const effectiveCtaText = ctaText || brandSettings.brandCtaText;
+        const effectiveCtaUrl = ctaUrl || brandSettings.brandCtaUrl;
+
         // Generate HTML version with professional template
         const htmlContent = generateColdEmailHtml({
             subject,
@@ -328,8 +332,8 @@ router.post('/send-cold-email', async (req, res) => {
             brandLogoUrl: brandSettings.brandLogoUrl,
             brandColor: brandSettings.brandColor,
             brandName: brandSettings.brandName,
-            brandCtaText: brandSettings.brandCtaText,
-            brandCtaUrl: brandSettings.brandCtaUrl,
+            brandCtaText: effectiveCtaText,
+            brandCtaUrl: effectiveCtaUrl,
         });
 
         // Send the email (pass userId to use their Resend API key if available)

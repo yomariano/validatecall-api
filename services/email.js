@@ -592,10 +592,19 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
         primaryColorLight = `hsl(${hue}, 70%, 95%)`;
     }
 
-    // Build header content - logo or text
+    // Build header content - logo or text (cleaner design)
     const headerContent = brandLogoUrl
-        ? `<img src="${brandLogoUrl}" alt="${brandName}" style="max-height: 50px; max-width: 200px; margin-bottom: 8px;" />`
-        : `<h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.5px;">${brandName}</h1>`;
+        ? `<img src="${brandLogoUrl}" alt="${brandName}" style="max-height: 40px; max-width: 180px;" />`
+        : `<h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 600;">${brandName}</h1>`;
+
+    // Check if body already contains a signature (to avoid duplicate)
+    const bodyLower = body.toLowerCase();
+    const hasSignature = bodyLower.includes('best regards') ||
+                         bodyLower.includes('best,') ||
+                         bodyLower.includes('regards,') ||
+                         bodyLower.includes('sincerely') ||
+                         bodyLower.includes('thanks,') ||
+                         bodyLower.includes('cheers,');
 
     return `
 <!DOCTYPE html>
@@ -612,9 +621,8 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
                 <table role="presentation" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
                     <!-- Header -->
                     <tr>
-                        <td style="background: linear-gradient(135deg, ${primaryColor} 0%, ${primaryColorDark} 100%); padding: 24px 32px; text-align: center;">
+                        <td style="background-color: ${brandColor || primaryColor}; padding: 20px 32px; text-align: center;">
                             ${headerContent}
-                            ${domain ? `<p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.85); font-size: 13px;">${domain}</p>` : ''}
                         </td>
                     </tr>
 
@@ -640,11 +648,11 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
                     ${brandCtaText && brandCtaUrl ? `
                     <!-- CTA Button -->
                     <tr>
-                        <td style="padding: 0 32px 32px 32px;">
+                        <td style="padding: 0 32px 24px 32px;">
                             <table role="presentation" style="width: 100%; border-collapse: collapse;">
                                 <tr>
                                     <td style="text-align: center;">
-                                        <a href="${brandCtaUrl}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, ${primaryColor} 0%, ${primaryColorDark} 100%); color: #ffffff; text-decoration: none; font-weight: 600; font-size: 15px; padding: 14px 32px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
+                                        <a href="${brandCtaUrl}" target="_blank" style="display: inline-block; background-color: ${brandColor || primaryColor}; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 14px; padding: 12px 28px; border-radius: 6px;">
                                             ${brandCtaText}
                                         </a>
                                     </td>
@@ -654,24 +662,26 @@ export function generateColdEmailHtml({ subject, body, senderName, senderCompany
                     </tr>
                     ` : ''}
 
-                    <!-- Footer / Signature -->
+                    ${!hasSignature ? `
+                    <!-- Footer / Signature (only if body doesn't have one) -->
                     <tr>
-                        <td style="padding: 0 32px 32px 32px;">
-                            <div style="border-top: 1px solid #e5e7eb; padding-top: 24px;">
+                        <td style="padding: 0 32px 24px 32px;">
+                            <div style="border-top: 1px solid #e5e7eb; padding-top: 20px;">
                                 <p style="margin: 0 0 4px 0; color: #6b7280; font-size: 14px;">Best regards,</p>
                                 <p style="margin: 0; font-size: 15px;">
                                     <strong style="color: #111827;">${senderName || 'The Team'}</strong>
                                 </p>
-                                ${senderCompany || domain ? `<p style="margin: 4px 0 0 0; color: #6b7280; font-size: 14px;">${senderCompany || brandName}</p>` : ''}
+                                ${senderCompany ? `<p style="margin: 4px 0 0 0; color: #6b7280; font-size: 14px;">${senderCompany}</p>` : ''}
                                 ${senderEmail ? `<p style="margin: 4px 0 0 0;"><a href="mailto:${senderEmail}" style="color: ${brandColor || primaryColor}; text-decoration: none; font-size: 14px;">${senderEmail}</a></p>` : ''}
                             </div>
                         </td>
                     </tr>
+                    ` : ''}
 
                     <!-- Bottom Brand Bar -->
                     <tr>
-                        <td style="background-color: ${primaryColorLight}; padding: 16px 32px; text-align: center;">
-                            <p style="margin: 0; color: #6b7280; font-size: 12px;">
+                        <td style="background-color: #f9fafb; padding: 16px 32px; text-align: center; border-top: 1px solid #e5e7eb;">
+                            <p style="margin: 0; color: #9ca3af; font-size: 12px;">
                                 ${domain ? `Sent from <a href="https://${domain}" style="color: ${brandColor || primaryColor}; text-decoration: none;">${domain}</a>` : ''}
                             </p>
                         </td>
