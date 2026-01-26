@@ -469,10 +469,51 @@ router.post('/inbound', async (req, res) => {
 
         // Find the user who owns this receiving email address
         // Look up by their configured Resend domain or custom email
-        const { data: userSettings, error: settingsError } = await supabase
+        const toDomain = toEmail.split('@')[1];
+        console.log('🔍 Looking for user with domain:', toDomain);
+
+        // Try multiple matching strategies
+        let userSettings = null;
+        let settingsError = null;
+
+        // Strategy 1: Exact email match
+        const { data: exactMatch, error: err1 } = await supabase
             .from('user_settings')
             .select('user_id')
-            .or(`resend_from_email.eq.${toEmail},resend_from_email.ilike.%@${toEmail.split('@')[1]}`);
+            .eq('resend_from_email', toEmail)
+            .maybeSingle();
+
+        if (exactMatch) {
+            userSettings = [exactMatch];
+            console.log('✅ Found user by exact email match');
+        } else {
+            // Strategy 2: Match by domain in resend_from_email
+            const { data: domainMatch, error: err2 } = await supabase
+                .from('user_settings')
+                .select('user_id')
+                .ilike('resend_from_email', `%@${toDomain}`)
+                .limit(1);
+
+            if (domainMatch && domainMatch.length > 0) {
+                userSettings = domainMatch;
+                console.log('✅ Found user by domain match in email');
+            } else {
+                // Strategy 3: Check resend_domain column if it exists
+                const { data: domainColMatch, error: err3 } = await supabase
+                    .from('user_settings')
+                    .select('user_id')
+                    .eq('resend_domain', toDomain)
+                    .limit(1);
+
+                if (domainColMatch && domainColMatch.length > 0) {
+                    userSettings = domainColMatch;
+                    console.log('✅ Found user by resend_domain column');
+                } else {
+                    console.log('⚠️ No user found for domain:', toDomain);
+                    settingsError = err1 || err2 || err3;
+                }
+            }
+        }
 
         if (settingsError) {
             console.error('Error finding user for inbound email:', settingsError);
@@ -483,6 +524,7 @@ router.post('/inbound', async (req, res) => {
 
         if (userSettings && userSettings.length > 0) {
             userId = userSettings[0].user_id;
+            console.log('👤 Matched to user:', userId);
 
             // Try to match to an existing lead by email
             const { data: lead } = await supabase
