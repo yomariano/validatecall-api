@@ -479,8 +479,8 @@ router.post('/inbound', async (req, res) => {
         const { data: domainRecord, error: domainError } = await supabase
             .from('user_domains')
             .select('user_id')
-            .ilike('domain', toDomain)
-            .eq('verified', true)
+            .ilike('domain_name', toDomain)
+            .eq('status', 'verified')
             .maybeSingle();
 
         if (domainError) {
