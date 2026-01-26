@@ -235,11 +235,13 @@ router.get('/resend/domains', async (req, res) => {
 
         const result = await getUserResendDomains(userId);
 
-        if (!result.success) {
-            return res.status(400).json({ error: result.error, domains: [] });
-        }
-
-        res.json(result);
+        // Return 200 even if no API key configured - just return empty domains
+        // This is not an error state, just means user hasn't set up Resend yet
+        res.json({
+            success: result.success,
+            domains: result.domains || [],
+            error: result.error || null,
+        });
     } catch (error) {
         console.error('Get user Resend domains error:', error);
         res.status(500).json({ error: error.message, domains: [] });
@@ -373,11 +375,13 @@ router.get('/sendgrid/senders', async (req, res) => {
 
         const result = await getUserSendGridSenders(userId);
 
-        if (!result.success) {
-            return res.status(400).json({ error: result.error, senders: [] });
-        }
-
-        res.json(result);
+        // Return 200 even if no API key configured - just return empty senders
+        // This is not an error state, just means user hasn't set up SendGrid yet
+        res.json({
+            success: result.success,
+            senders: result.senders || [],
+            error: result.error || null,
+        });
     } catch (error) {
         console.error('Get user SendGrid senders error:', error);
         res.status(500).json({ error: error.message, senders: [] });
