@@ -437,6 +437,108 @@ router.post('/test', async (req, res) => {
 });
 
 /**
+ * POST /api/email/inbound
+ * Receive inbound emails from Cloudflare Email Workers
+ * This allows emails to be stored in ValidateCall while also forwarding to Gmail
+ * Body: { from, to, subject, text, html, headers }
+ */
+router.post('/inbound', async (req, res) => {
+    try {
+        const { from, to, subject, text, html, headers, rawSize } = req.body;
+
+        console.log('📧 Inbound email received:', { from, to, subject });
+
+        if (!from || !to) {
+            return res.status(400).json({ error: 'from and to are required' });
+        }
+
+        // Extract email address from "Name <email@domain.com>" format
+        const extractEmail = (str) => {
+            const match = str.match(/<([^>]+)>/);
+            return match ? match[1] : str;
+        };
+
+        const extractName = (str) => {
+            const match = str.match(/^([^<]+)</);
+            return match ? match[1].trim() : null;
+        };
+
+        const fromEmail = extractEmail(from);
+        const fromName = extractName(from);
+        const toEmail = extractEmail(to);
+
+        // Find the user who owns this receiving email address
+        // Look up by their configured Resend domain or custom email
+        const { data: userSettings, error: settingsError } = await supabase
+            .from('user_settings')
+            .select('user_id')
+            .or(`resend_from_email.eq.${toEmail},resend_from_email.ilike.%@${toEmail.split('@')[1]}`);
+
+        if (settingsError) {
+            console.error('Error finding user for inbound email:', settingsError);
+        }
+
+        let userId = null;
+        let leadId = null;
+
+        if (userSettings && userSettings.length > 0) {
+            userId = userSettings[0].user_id;
+
+            // Try to match to an existing lead by email
+            const { data: lead } = await supabase
+                .from('leads')
+                .select('id')
+                .eq('user_id', userId)
+                .eq('email', fromEmail)
+                .maybeSingle();
+
+            if (lead) {
+                leadId = lead.id;
+            }
+        }
+
+        // Generate a unique ID for this inbound email (since it's not from Resend)
+        const cloudflareEmailId = `cf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Store the inbound email
+        const { data: response, error: insertError } = await supabase
+            .from('email_responses')
+            .insert({
+                user_id: userId,
+                lead_id: leadId,
+                from_email: fromEmail,
+                from_name: fromName,
+                to_email: toEmail,
+                subject: subject || '(No subject)',
+                body_text: text,
+                body_html: html,
+                status: 'unread',
+                received_at: new Date().toISOString(),
+                resend_email_id: cloudflareEmailId, // Use generated ID for Cloudflare emails
+            })
+            .select()
+            .single();
+
+        if (insertError) {
+            console.error('Failed to store inbound email:', insertError);
+            return res.status(500).json({ error: insertError.message });
+        }
+
+        console.log('✅ Inbound email stored:', response.id);
+
+        res.json({
+            success: true,
+            responseId: response.id,
+            userId,
+            leadId,
+        });
+    } catch (error) {
+        console.error('Inbound email error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * POST /api/email/track-event
  * Track user events for trigger automation
  * Body: { userId, eventType, eventData?, pageUrl? }
