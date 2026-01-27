@@ -819,8 +819,7 @@ router.post('/call', async (req, res) => {
             return res.status(400).json({ error: 'phoneNumber is required' });
         }
 
-        // DISABLED: VoIPcloud routing - use VAPI directly for all calls (see user endpoint)
-        /*
+        // Route Irish calls through VoIPcloud click-to-call
         if (isIrishNumber(phoneNumber)) {
             if (!VOIPCLOUD_TOKEN) {
                 return res.status(400).json({
@@ -831,7 +830,7 @@ router.post('/call', async (req, res) => {
 
             console.log(`📞 Routing Irish number ${phoneNumber} via VoIPcloud`);
             try {
-                const voipcloudData = await makeVoIPcloudCall(phoneNumber);
+                const voipcloudData = await makeVoIPcloudCall(phoneNumber, process.env.VOIPCLOUD_CALLER_ID || '+35312655181');
                 return res.json({
                     id: voipcloudData.call_id || `voipcloud-${Date.now()}`,
                     provider: 'voipcloud',
@@ -845,7 +844,6 @@ router.post('/call', async (req, res) => {
                 return res.status(500).json({ error: voipError.message });
             }
         }
-        */
 
         // Get next available phone number from rotation
         const phoneNumberId = phoneRotator.usePhoneNumber();
@@ -1470,10 +1468,8 @@ router.post('/user/:userId/call', async (req, res) => {
             console.log(`   Call reserved: ${callReservation.used}/${callReservation.limit}`);
         }
 
-        // DISABLED: VoIPcloud routing doesn't work for outbound calls (only for inbound SIP)
-        // VoIPcloud SIP trunk is configured for receiving calls, not making outbound calls
-        // Use VAPI directly for all calls including Irish numbers - Twilio supports Irish numbers
-        /*
+        // Route Irish calls through VoIPcloud click-to-call
+        // Flow: VoIPcloud calls extension 1001 (VAPI SIP trunk) → VAPI answers → VoIPcloud bridges to destination
         if (isIrishNumber(phoneNumber)) {
             if (!VOIPCLOUD_TOKEN) {
                 if (callReservation.isFreeTier && callReservation.reserved) {
@@ -1487,7 +1483,7 @@ router.post('/user/:userId/call', async (req, res) => {
 
             console.log(`📞 [User: ${userId}] Routing Irish number ${phoneNumber} via VoIPcloud`);
             try {
-                const voipcloudData = await makeVoIPcloudCall(phoneNumber);
+                const voipcloudData = await makeVoIPcloudCall(phoneNumber, process.env.VOIPCLOUD_CALLER_ID || '+35312655181');
 
                 await supabase.from('calls').insert({
                     user_id: userId,
@@ -1515,7 +1511,6 @@ router.post('/user/:userId/call', async (req, res) => {
                 return res.status(500).json({ error: voipError.message });
             }
         }
-        */
 
         // Get next available phone number for this user from database
         let userPhone = await getUserPhoneNumber(userId);
