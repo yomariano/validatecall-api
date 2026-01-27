@@ -72,6 +72,13 @@ async function makeVoIPcloudCall(destinationNumber, callerId) {
 
     const result = await response.json();
     console.log(`📞 [VoIPcloud] Success response:`, JSON.stringify(result));
+
+    // VoIPcloud returns 200 OK even for errors - check response body
+    if (result.status === 'error' || result.code === 401 || result.code === 403) {
+        console.error(`📞 [VoIPcloud] API returned error in body:`, result.message);
+        throw new Error(result.message || 'VoIPcloud call failed');
+    }
+
     return result;
 }
 
