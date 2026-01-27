@@ -40,25 +40,39 @@ async function makeVoIPcloudCall(destinationNumber, callerId) {
 
     console.log(`📞 [VoIPcloud] Calling ${destinationNumber} via Irish trunk`);
 
+    const payload = {
+        user_number: VOIPCLOUD_USER_NUMBER,
+        number_to_call: destinationNumber,
+        caller_id: callerId || VOIPCLOUD_CALLER_ID || VOIPCLOUD_USER_NUMBER,
+    };
+    console.log(`📞 [VoIPcloud] Payload:`, JSON.stringify(payload));
+
     const response = await fetch(`${VOIPCLOUD_API_URL}/api/integration/v2/call-to-number`, {
         method: 'POST',
         headers: {
             'token': VOIPCLOUD_TOKEN,
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-            user_number: VOIPCLOUD_USER_NUMBER,
-            number_to_call: destinationNumber,
-            caller_id: callerId || VOIPCLOUD_CALLER_ID || VOIPCLOUD_USER_NUMBER,
-        }),
+        body: JSON.stringify(payload),
     });
 
+    console.log(`📞 [VoIPcloud] Response status: ${response.status}`);
+
     if (!response.ok) {
-        const error = await response.json().catch(() => ({ message: 'VoIPcloud call failed' }));
+        const errorText = await response.text();
+        console.error(`📞 [VoIPcloud] Error response:`, errorText);
+        let error;
+        try {
+            error = JSON.parse(errorText);
+        } catch (e) {
+            error = { message: 'VoIPcloud call failed' };
+        }
         throw new Error(error.message || `VoIPcloud error: ${response.status}`);
     }
 
-    return response.json();
+    const result = await response.json();
+    console.log(`📞 [VoIPcloud] Success response:`, JSON.stringify(result));
+    return result;
 }
 
 // Initialize Supabase for free tier checks
