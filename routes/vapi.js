@@ -819,7 +819,8 @@ router.post('/call', async (req, res) => {
             return res.status(400).json({ error: 'phoneNumber is required' });
         }
 
-        // Route Irish calls through VoIPcloud
+        // DISABLED: VoIPcloud routing - use VAPI directly for all calls (see user endpoint)
+        /*
         if (isIrishNumber(phoneNumber)) {
             if (!VOIPCLOUD_TOKEN) {
                 return res.status(400).json({
@@ -844,6 +845,7 @@ router.post('/call', async (req, res) => {
                 return res.status(500).json({ error: voipError.message });
             }
         }
+        */
 
         // Get next available phone number from rotation
         const phoneNumberId = phoneRotator.usePhoneNumber();
@@ -1468,10 +1470,12 @@ router.post('/user/:userId/call', async (req, res) => {
             console.log(`   Call reserved: ${callReservation.used}/${callReservation.limit}`);
         }
 
-        // Route Irish calls through VoIPcloud
+        // DISABLED: VoIPcloud routing doesn't work for outbound calls (only for inbound SIP)
+        // VoIPcloud SIP trunk is configured for receiving calls, not making outbound calls
+        // Use VAPI directly for all calls including Irish numbers - Twilio supports Irish numbers
+        /*
         if (isIrishNumber(phoneNumber)) {
             if (!VOIPCLOUD_TOKEN) {
-                // Rollback the reservation since we can't make the call
                 if (callReservation.isFreeTier && callReservation.reserved) {
                     await rollbackFreeTierCall(userId);
                 }
@@ -1485,7 +1489,6 @@ router.post('/user/:userId/call', async (req, res) => {
             try {
                 const voipcloudData = await makeVoIPcloudCall(phoneNumber);
 
-                // Store call in database
                 await supabase.from('calls').insert({
                     user_id: userId,
                     vapi_call_id: voipcloudData.call_id || `voipcloud-${Date.now()}`,
@@ -1505,7 +1508,6 @@ router.post('/user/:userId/call', async (req, res) => {
                 });
             } catch (voipError) {
                 console.error('VoIPcloud call failed:', voipError.message);
-                // Rollback the reservation on failure
                 if (callReservation.isFreeTier && callReservation.reserved) {
                     await rollbackFreeTierCall(userId);
                     console.log(`📞 [User: ${userId}] Call rolled back due to VoIPcloud failure`);
@@ -1513,6 +1515,7 @@ router.post('/user/:userId/call', async (req, res) => {
                 return res.status(500).json({ error: voipError.message });
             }
         }
+        */
 
         // Get next available phone number for this user from database
         let userPhone = await getUserPhoneNumber(userId);

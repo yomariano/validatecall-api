@@ -113,7 +113,7 @@ async function makeVapiCall(destinationNumber) {
         temperature: 0.7,
       },
       voice: {
-        provider: 'elevenlabs',
+        provider: '11labs',
         voiceId: 'burt',
       },
       recordingEnabled: true,
@@ -156,10 +156,16 @@ async function main() {
   const isIrish = isIrishNumber(phoneNumber);
   console.log(`🌍 Number Type: ${isIrish ? 'Irish (+353)' : 'International'}`);
 
+  // Check for --force-vapi flag
+  const forceVapi = args.includes('--force-vapi');
+  if (forceVapi) {
+    console.log('⚠️  Forcing VAPI direct call (bypassing VoIPcloud)');
+  }
+
   try {
     let result;
 
-    if (isIrish) {
+    if (isIrish && !forceVapi) {
       result = await makeVoIPcloudCall(phoneNumber);
       console.log('\n✅ Call initiated via VoIPcloud!');
       console.log(`📞 Call ID: ${result.call_id || result.id || 'N/A'}`);
