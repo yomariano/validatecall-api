@@ -1355,13 +1355,69 @@ router.delete('/assistants/:assistantId', async (req, res) => {
 
 // Get available voices from different providers
 router.get('/voices', async (req, res) => {
-    // Return comprehensive list of voices available in VAPI
-    // VAPI doesn't have a public API to list voices, so we maintain this list
-    res.json({
-        '11labs': ELEVENLABS_VOICES,
-        'openai': OPENAI_VOICES,
-        'deepgram': DEEPGRAM_VOICES,
-    });
+    try {
+        let elevenLabsVoices = ELEVENLABS_VOICES; // Fallback to hardcoded list
+
+        // Try to fetch voices from ElevenLabs API if key is available
+        const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+        if (ELEVENLABS_API_KEY) {
+            try {
+                console.log('📢 Fetching voices from ElevenLabs API...');
+                const response = await fetch('https://api.elevenlabs.io/v2/voices?page_size=100', {
+                    method: 'GET',
+                    headers: {
+                        'xi-api-key': ELEVENLABS_API_KEY,
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    // Transform ElevenLabs voice format to our format
+                    elevenLabsVoices = data.voices.map(voice => ({
+                        id: voice.voice_id,
+                        name: voice.name,
+                        gender: voice.labels?.gender || 'neutral',
+                        description: voice.labels?.description ||
+                                   (voice.labels?.accent ? `${voice.labels.accent}` : '') +
+                                   (voice.labels?.age ? ` - ${voice.labels.age}` : '') ||
+                                   voice.category || 'Voice',
+                    }));
+
+                    // Add custom voice option at the end
+                    elevenLabsVoices.push({
+                        id: 'custom',
+                        name: '⚙️ Custom Voice ID',
+                        gender: 'neutral',
+                        description: 'Enter your own ElevenLabs voice ID'
+                    });
+
+                    console.log(`✅ Fetched ${elevenLabsVoices.length} voices from ElevenLabs API`);
+                } else {
+                    console.warn('⚠️ Failed to fetch from ElevenLabs API, using hardcoded list');
+                }
+            } catch (elevenLabsError) {
+                console.error('⚠️ Error fetching ElevenLabs voices:', elevenLabsError.message);
+                // Fall back to hardcoded list
+            }
+        } else {
+            console.warn('⚠️ ELEVENLABS_API_KEY not set, using hardcoded voice list');
+        }
+
+        res.json({
+            '11labs': elevenLabsVoices,
+            'openai': OPENAI_VOICES,
+            'deepgram': DEEPGRAM_VOICES,
+        });
+    } catch (error) {
+        console.error('Error in /voices endpoint:', error);
+        // Return hardcoded lists as fallback
+        res.json({
+            '11labs': ELEVENLABS_VOICES,
+            'openai': OPENAI_VOICES,
+            'deepgram': DEEPGRAM_VOICES,
+        });
+    }
 });
 
 // Comprehensive ElevenLabs voices available in VAPI (unique IDs only)
