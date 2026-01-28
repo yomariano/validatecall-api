@@ -1954,4 +1954,106 @@ router.get('/user/:userId/phone-numbers', async (req, res) => {
     }
 });
 
+/**
+ * VAPI Function Tool Endpoint - Transfer Call to Mariano
+ *
+ * Called by VAPI AI assistant when a lead is qualified and ready to speak with Mariano.
+ * Uses VAPI's forwardingPhoneNumber or conference feature to connect Mariano to the call.
+ */
+router.post('/transfer-call', async (req, res) => {
+    try {
+        const { message, call } = req.body;
+
+        // Extract function parameters from AI's call
+        const reason = message?.toolCalls?.[0]?.function?.arguments?.reason || 'interested lead';
+        const leadQuality = message?.toolCalls?.[0]?.function?.arguments?.leadQuality || 'warm';
+        const callId = call?.id;
+
+        console.log('🔄 Transfer request received:', {
+            callId,
+            reason,
+            leadQuality,
+            customerPhone: call?.customer?.number,
+            timestamp: new Date().toISOString()
+        });
+
+        if (!callId) {
+            return res.status(400).json({
+                error: 'Missing call ID'
+            });
+        }
+
+        const HANDOFF_PHONE = process.env.HANDOFF_PHONE;
+        if (!HANDOFF_PHONE) {
+            console.error('❌ HANDOFF_PHONE not configured');
+            return res.status(500).json({
+                error: 'Transfer number not configured'
+            });
+        }
+
+        // Use VAPI's forwarding/transfer capability
+        // This will forward the call to Mariano's number
+        const transferResponse = await fetch(`${VAPI_API_URL}/call/${callId}`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `Bearer ${VAPI_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                forwardingPhoneNumber: HANDOFF_PHONE
+            })
+        });
+
+        if (!transferResponse.ok) {
+            const error = await transferResponse.text();
+            console.error('❌ VAPI transfer failed:', error);
+
+            return res.status(500).json({
+                error: 'Transfer failed',
+                details: error
+            });
+        }
+
+        const transferData = await transferResponse.json();
+
+        console.log('✅ Call transferred successfully to Mariano');
+        console.log(`   Lead quality: ${leadQuality}`);
+        console.log(`   Reason: ${reason}`);
+
+        // Return success response to VAPI
+        // The AI will say the "request-complete" message and then call transfers
+        return res.json({
+            success: true,
+            message: `Transferring to Mariano now. Lead quality: ${leadQuality}`,
+            handoffNumber: HANDOFF_PHONE,
+            leadInfo: {
+                quality: leadQuality,
+                reason: reason
+            },
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('❌ Transfer endpoint error:', error);
+        return res.status(500).json({
+            error: 'Internal server error',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * Health check for transfer endpoint
+ */
+router.get('/transfer-call/health', (req, res) => {
+    const handoffConfigured = !!process.env.HANDOFF_PHONE;
+
+    res.json({
+        status: 'ok',
+        handoffConfigured,
+        handoffNumber: handoffConfigured ? process.env.HANDOFF_PHONE : 'not set',
+        endpoint: '/api/vapi/transfer-call'
+    });
+});
+
 export default router;
