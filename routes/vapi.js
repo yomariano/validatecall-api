@@ -52,20 +52,75 @@ function isIrishNumber(phoneNumber) {
 }
 
 /**
+ * Irish VAPI phone numbers that receive VoIPcloud SIP trunk calls
+ * Round-robin between these to distribute load
+ */
+const IRISH_VAPI_PHONE_IDS = [
+    'a18d1d9c-92cf-416c-a332-47043a3f8e2d', // +35312655193
+    'f5d8f479-a6db-45a0-ad1e-041e39635425', // +35312655181
+];
+let irishPhoneIndex = 0;
+
+/**
+ * Update the assistant on an Irish VAPI phone number
+ * This allows dynamic assistant selection for Irish calls
+ */
+async function updateIrishVapiAssistant(assistantId) {
+    if (!assistantId || !VAPI_API_KEY) {
+        return null;
+    }
+
+    // Use round-robin to select which Irish phone number to update
+    const phoneId = IRISH_VAPI_PHONE_IDS[irishPhoneIndex];
+    irishPhoneIndex = (irishPhoneIndex + 1) % IRISH_VAPI_PHONE_IDS.length;
+
+    console.log(`📞 [VoIPcloud] Updating Irish phone ${phoneId} to use assistant ${assistantId}`);
+
+    try {
+        const response = await fetch(`${VAPI_API_URL}/phone-number/${phoneId}`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `Bearer ${VAPI_API_KEY}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ assistantId }),
+        });
+
+        if (!response.ok) {
+            console.error(`📞 [VoIPcloud] Failed to update assistant: ${response.status}`);
+            return null;
+        }
+
+        const result = await response.json();
+        console.log(`📞 [VoIPcloud] Assistant updated successfully on ${result.number}`);
+        return result;
+    } catch (error) {
+        console.error(`📞 [VoIPcloud] Error updating assistant:`, error.message);
+        return null;
+    }
+}
+
+/**
  * Make a call via VoIPcloud (for Irish numbers)
  *
  * Call Flow:
- * 1. API calls VoIPcloud with destination number
- * 2. VoIPcloud calls extension 1001 (configured as VAPI SIP trunk)
- * 3. VAPI answers with the assistant configured on +35312655193 or +35312655181
- * 4. VoIPcloud bridges the call to the destination number
- * 5. Recipient sees Irish caller ID and talks to the VAPI assistant
+ * 1. (Optional) Update VAPI phone number with selected assistantId
+ * 2. API calls VoIPcloud with destination number
+ * 3. VoIPcloud calls extension 1001 (configured as VAPI SIP trunk)
+ * 4. VAPI answers with the assistant configured on +35312655193 or +35312655181
+ * 5. VoIPcloud bridges the call to the destination number
+ * 6. Recipient sees Irish caller ID and talks to the VAPI assistant
  *
- * NOTE: This flow uses a pre-configured assistant (cannot pass custom product ideas)
+ * NOTE: Now supports dynamic assistant selection!
  */
-async function makeVoIPcloudCall(destinationNumber, callerId) {
+async function makeVoIPcloudCall(destinationNumber, callerId, assistantId = null) {
     if (!VOIPCLOUD_TOKEN) {
         throw new Error('VoIPcloud API token not configured');
+    }
+
+    // Update the assistant on the Irish phone number if specified
+    if (assistantId) {
+        await updateIrishVapiAssistant(assistantId);
     }
 
     console.log(`📞 [VoIPcloud] Calling ${destinationNumber} via Irish trunk`);
@@ -859,14 +914,23 @@ router.post('/call', async (req, res) => {
             }
 
             console.log(`📞 Routing Irish number ${phoneNumber} via VoIPcloud`);
+            if (assistantId) {
+                console.log(`📞 Using selected assistant: ${assistantId}`);
+            }
+
             try {
-                const voipcloudData = await makeVoIPcloudCall(phoneNumber, process.env.VOIPCLOUD_CALLER_ID || '+35312655181');
+                const voipcloudData = await makeVoIPcloudCall(
+                    phoneNumber,
+                    process.env.VOIPCLOUD_CALLER_ID || '+35312655181',
+                    assistantId // Pass the selected assistant ID
+                );
                 return res.json({
                     id: voipcloudData.call_id || `voipcloud-${Date.now()}`,
                     provider: 'voipcloud',
                     status: 'initiated',
                     phoneNumber,
                     customerName,
+                    assistantUsed: assistantId || 'default',
                     ...voipcloudData,
                 });
             } catch (voipError) {
@@ -1512,8 +1576,16 @@ router.post('/user/:userId/call', async (req, res) => {
             }
 
             console.log(`📞 [User: ${userId}] Routing Irish number ${phoneNumber} via VoIPcloud`);
+            if (assistantId) {
+                console.log(`📞 [User: ${userId}] Using selected assistant: ${assistantId}`);
+            }
+
             try {
-                const voipcloudData = await makeVoIPcloudCall(phoneNumber, process.env.VOIPCLOUD_CALLER_ID || '+35312655181');
+                const voipcloudData = await makeVoIPcloudCall(
+                    phoneNumber,
+                    process.env.VOIPCLOUD_CALLER_ID || '+35312655181',
+                    assistantId // Pass the selected assistant ID
+                );
 
                 await supabase.from('calls').insert({
                     user_id: userId,
@@ -1521,7 +1593,7 @@ router.post('/user/:userId/call', async (req, res) => {
                     phone_number: phoneNumber,
                     customer_name: customerName,
                     status: 'initiated',
-                    raw_response: { provider: 'voipcloud', ...voipcloudData },
+                    raw_response: { provider: 'voipcloud', assistantId, ...voipcloudData },
                 });
 
                 return res.json({
@@ -1530,6 +1602,7 @@ router.post('/user/:userId/call', async (req, res) => {
                     status: 'initiated',
                     phoneNumber,
                     customerName,
+                    assistantUsed: assistantId || 'default',
                     ...voipcloudData,
                 });
             } catch (voipError) {
