@@ -22,6 +22,28 @@ const VOIPCLOUD_USER_NUMBER = process.env.VOIPCLOUD_USER_NUMBER || '1001'; // Ex
 const VOIPCLOUD_CALLER_ID = process.env.VOIPCLOUD_CALLER_ID; // Irish caller ID
 
 /**
+ * IRISH CALLS - VAPI ASSISTANT CONFIGURATION
+ *
+ * Irish phone numbers in VAPI that receive SIP trunk calls from VoIPcloud:
+ * - +35312655193 (ID: a18d1d9c-92cf-416c-a332-47043a3f8e2d)
+ * - +35312655181 (ID: f5d8f479-a6db-45a0-ad1e-041e39635425)
+ *
+ * Both numbers are configured with the "rachel" market research assistant:
+ * - Assistant ID: d2fa6729-3273-4f46-82af-7e503e4bd0fd
+ * - Assistant Name: "rachel"
+ * - First Message: "Hi there! This is Alex from a quick market research study..."
+ * - Purpose: Generic market research calls (no specific product pitch)
+ *
+ * LIMITATION: VoIPcloud routing cannot pass dynamic product ideas from the frontend.
+ * The assistant on these numbers is static and will conduct generic market research surveys.
+ * For calls with custom product pitches, use non-Irish numbers (VAPI direct routing).
+ *
+ * To change the assistant:
+ * 1. List available assistants: GET https://api.vapi.ai/assistant
+ * 2. Update phone number: PATCH https://api.vapi.ai/phone-number/{phoneId} with {"assistantId": "new-id"}
+ */
+
+/**
  * Check if a phone number is Irish (+353)
  */
 function isIrishNumber(phoneNumber) {
@@ -31,7 +53,15 @@ function isIrishNumber(phoneNumber) {
 
 /**
  * Make a call via VoIPcloud (for Irish numbers)
- * VoIPcloud calls VAPI (via SIP trunk) → VAPI answers → bridges to destination
+ *
+ * Call Flow:
+ * 1. API calls VoIPcloud with destination number
+ * 2. VoIPcloud calls extension 1001 (configured as VAPI SIP trunk)
+ * 3. VAPI answers with the assistant configured on +35312655193 or +35312655181
+ * 4. VoIPcloud bridges the call to the destination number
+ * 5. Recipient sees Irish caller ID and talks to the VAPI assistant
+ *
+ * NOTE: This flow uses a pre-configured assistant (cannot pass custom product ideas)
  */
 async function makeVoIPcloudCall(destinationNumber, callerId) {
     if (!VOIPCLOUD_TOKEN) {
