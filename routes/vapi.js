@@ -1265,6 +1265,9 @@ router.post('/assistants', async (req, res) => {
 
         const assistantConfig = req.body;
 
+        // Debug: Log what voice config is being sent to Vapi
+        console.log('🎤 [Vapi] Creating assistant with voice config:', JSON.stringify(assistantConfig.voice, null, 2));
+
         const response = await fetch(`${VAPI_API_URL}/assistant`, {
             method: 'POST',
             headers: {
@@ -1298,6 +1301,11 @@ router.patch('/assistants/:assistantId', async (req, res) => {
 
         const { assistantId } = req.params;
         const updates = req.body;
+
+        // Debug: Log what voice config is being sent to Vapi
+        if (updates.voice) {
+            console.log(`🎤 [Vapi] Updating assistant ${assistantId} with voice config:`, JSON.stringify(updates.voice, null, 2));
+        }
 
         const response = await fetch(`${VAPI_API_URL}/assistant/${assistantId}`, {
             method: 'PATCH',
