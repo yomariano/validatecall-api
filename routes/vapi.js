@@ -1318,8 +1318,10 @@ router.patch('/assistants/:assistantId', async (req, res) => {
 
         if (!response.ok) {
             const error = await response.json();
+            console.error('❌ [Vapi] Update assistant error:', JSON.stringify(error, null, 2));
+            console.error('❌ [Vapi] Request body was:', JSON.stringify(updates, null, 2));
             return res.status(response.status).json({
-                error: error.message || 'Failed to update assistant'
+                error: error.message || JSON.stringify(error) || 'Failed to update assistant'
             });
         }
 
