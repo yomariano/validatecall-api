@@ -1523,15 +1523,27 @@ const DEEPGRAM_VOICES = [
     { id: 'zeus-en', name: 'Zeus', gender: 'male', description: 'Authoritative male' },
 ];
 
-// Vapi built-in voices - native Vapi provider voices
+// Vapi built-in voices - native Vapi provider voices (exact IDs from Vapi API)
 const VAPI_VOICES = [
-    { id: 'jennifer', name: 'Jennifer', gender: 'female', description: 'Natural conversational - American' },
-    { id: 'sophia', name: 'Sophia', gender: 'female', description: 'Warm and friendly - American' },
-    { id: 'maya', name: 'Maya', gender: 'female', description: 'Professional - American' },
-    { id: 'david', name: 'David', gender: 'male', description: 'Clear and articulate - American' },
-    { id: 'john', name: 'John', gender: 'male', description: 'Friendly conversational - American' },
-    { id: 'emma', name: 'Emma', gender: 'female', description: 'Young and energetic - British' },
-    { id: 'ryan', name: 'Ryan', gender: 'male', description: 'Confident and clear - American' },
+    { id: 'Elliot', name: 'Elliot', gender: 'male', description: 'Natural conversational' },
+    { id: 'Kylie', name: 'Kylie', gender: 'female', description: 'Warm and friendly' },
+    { id: 'Rohan', name: 'Rohan', gender: 'male', description: 'Clear and articulate' },
+    { id: 'Lily', name: 'Lily', gender: 'female', description: 'Soft and gentle' },
+    { id: 'Savannah', name: 'Savannah', gender: 'female', description: 'Southern charm' },
+    { id: 'Hana', name: 'Hana', gender: 'female', description: 'Professional' },
+    { id: 'Neha', name: 'Neha', gender: 'female', description: 'Warm tone' },
+    { id: 'Cole', name: 'Cole', gender: 'male', description: 'Confident' },
+    { id: 'Harry', name: 'Harry', gender: 'male', description: 'British accent' },
+    { id: 'Paige', name: 'Paige', gender: 'female', description: 'Friendly' },
+    { id: 'Spencer', name: 'Spencer', gender: 'male', description: 'Professional' },
+    { id: 'Leah', name: 'Leah', gender: 'female', description: 'Energetic' },
+    { id: 'Tara', name: 'Tara', gender: 'female', description: 'Natural' },
+    { id: 'Jess', name: 'Jess', gender: 'female', description: 'Casual' },
+    { id: 'Leo', name: 'Leo', gender: 'male', description: 'Warm' },
+    { id: 'Dan', name: 'Dan', gender: 'male', description: 'Conversational' },
+    { id: 'Mia', name: 'Mia', gender: 'female', description: 'Youthful' },
+    { id: 'Zac', name: 'Zac', gender: 'male', description: 'Dynamic' },
+    { id: 'Zoe', name: 'Zoe', gender: 'female', description: 'Bright and clear' },
 ];
 
 // Parse phone numbers utility endpoint
