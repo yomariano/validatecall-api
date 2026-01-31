@@ -1415,11 +1415,15 @@ router.get('/voices', async (req, res) => {
             console.warn('⚠️ ELEVENLABS_API_KEY not set, using hardcoded voice list');
         }
 
-        // Fetch Vapi voices from Vapi API
+        // Vapi built-in voices are preset by Vapi and not returned from API
+        // These are the official voice IDs that Vapi accepts
+        vapiVoices = VAPI_BUILTIN_VOICES;
+
+        // Optionally fetch custom voices from Vapi API and merge with built-in
         const VAPI_API_KEY = process.env.VAPI_API_KEY;
         if (VAPI_API_KEY) {
             try {
-                console.log('📢 Fetching voices from Vapi API...');
+                console.log('📢 Fetching custom voices from Vapi API...');
                 const response = await fetch('https://api.vapi.ai/voice', {
                     method: 'GET',
                     headers: {
@@ -1430,26 +1434,25 @@ router.get('/voices', async (req, res) => {
 
                 if (response.ok) {
                     const data = await response.json();
-                    // Filter for Vapi provider voices and transform to our format
-                    vapiVoices = data
+                    // Get custom Vapi voices and add to the list
+                    const customVoices = data
                         .filter(voice => voice.provider === 'vapi')
                         .map(voice => ({
                             id: voice.voiceId,
-                            name: voice.voiceId, // Vapi uses voiceId as the name
+                            name: voice.voiceId,
                             gender: voice.gender || 'neutral',
-                            description: voice.description || 'Vapi voice',
+                            description: voice.description || 'Custom Vapi voice',
                         }));
 
-                    console.log(`✅ Fetched ${vapiVoices.length} Vapi voices from API`);
-                } else {
-                    const errorText = await response.text();
-                    console.warn('⚠️ Failed to fetch from Vapi API:', response.status, errorText);
+                    if (customVoices.length > 0) {
+                        vapiVoices = [...VAPI_BUILTIN_VOICES, ...customVoices];
+                        console.log(`✅ Added ${customVoices.length} custom Vapi voices`);
+                    }
                 }
             } catch (vapiError) {
-                console.error('⚠️ Error fetching Vapi voices:', vapiError.message);
+                console.error('⚠️ Error fetching custom Vapi voices:', vapiError.message);
+                // Continue with built-in voices only
             }
-        } else {
-            console.warn('⚠️ VAPI_API_KEY not set, cannot fetch Vapi voices');
         }
 
         res.json({
@@ -1460,15 +1463,39 @@ router.get('/voices', async (req, res) => {
         });
     } catch (error) {
         console.error('Error in /voices endpoint:', error);
-        // Return hardcoded lists as fallback (except vapi which requires API)
+        // Return hardcoded lists as fallback
         res.json({
             '11labs': ELEVENLABS_VOICES,
-            'vapi': [],
+            'vapi': VAPI_BUILTIN_VOICES,
             'openai': OPENAI_VOICES,
             'deepgram': DEEPGRAM_VOICES,
         });
     }
 });
+
+// Vapi built-in voices - these are preset by Vapi and not returned from any API
+// Official voice IDs from Vapi documentation
+const VAPI_BUILTIN_VOICES = [
+    { id: 'Elliot', name: 'Elliot', gender: 'male', description: 'Natural conversational' },
+    { id: 'Kylie', name: 'Kylie', gender: 'female', description: 'Warm and friendly' },
+    { id: 'Rohan', name: 'Rohan', gender: 'male', description: 'Clear and articulate' },
+    { id: 'Lily', name: 'Lily', gender: 'female', description: 'Soft and gentle' },
+    { id: 'Savannah', name: 'Savannah', gender: 'female', description: 'Southern charm' },
+    { id: 'Hana', name: 'Hana', gender: 'female', description: 'Professional' },
+    { id: 'Neha', name: 'Neha', gender: 'female', description: 'Warm tone' },
+    { id: 'Cole', name: 'Cole', gender: 'male', description: 'Confident' },
+    { id: 'Harry', name: 'Harry', gender: 'male', description: 'British accent' },
+    { id: 'Paige', name: 'Paige', gender: 'female', description: 'Friendly' },
+    { id: 'Spencer', name: 'Spencer', gender: 'male', description: 'Professional' },
+    { id: 'Leah', name: 'Leah', gender: 'female', description: 'Energetic' },
+    { id: 'Tara', name: 'Tara', gender: 'female', description: 'Natural' },
+    { id: 'Jess', name: 'Jess', gender: 'female', description: 'Casual' },
+    { id: 'Leo', name: 'Leo', gender: 'male', description: 'Warm' },
+    { id: 'Dan', name: 'Dan', gender: 'male', description: 'Conversational' },
+    { id: 'Mia', name: 'Mia', gender: 'female', description: 'Youthful' },
+    { id: 'Zac', name: 'Zac', gender: 'male', description: 'Dynamic' },
+    { id: 'Zoe', name: 'Zoe', gender: 'female', description: 'Bright and clear' },
+];
 
 // Comprehensive ElevenLabs voices available in VAPI (unique IDs only)
 const ELEVENLABS_VOICES = [
