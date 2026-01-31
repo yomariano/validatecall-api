@@ -1416,6 +1416,7 @@ router.get('/voices', async (req, res) => {
 
         res.json({
             '11labs': elevenLabsVoices,
+            'vapi': VAPI_VOICES,
             'openai': OPENAI_VOICES,
             'deepgram': DEEPGRAM_VOICES,
         });
@@ -1424,6 +1425,7 @@ router.get('/voices', async (req, res) => {
         // Return hardcoded lists as fallback
         res.json({
             '11labs': ELEVENLABS_VOICES,
+            'vapi': VAPI_VOICES,
             'openai': OPENAI_VOICES,
             'deepgram': DEEPGRAM_VOICES,
         });
@@ -1519,6 +1521,17 @@ const DEEPGRAM_VOICES = [
     { id: 'orpheus-en', name: 'Orpheus', gender: 'male', description: 'Natural male voice' },
     { id: 'helios-en', name: 'Helios', gender: 'male', description: 'British accent' },
     { id: 'zeus-en', name: 'Zeus', gender: 'male', description: 'Authoritative male' },
+];
+
+// Vapi built-in voices - native Vapi provider voices
+const VAPI_VOICES = [
+    { id: 'jennifer', name: 'Jennifer', gender: 'female', description: 'Natural conversational - American' },
+    { id: 'sophia', name: 'Sophia', gender: 'female', description: 'Warm and friendly - American' },
+    { id: 'maya', name: 'Maya', gender: 'female', description: 'Professional - American' },
+    { id: 'david', name: 'David', gender: 'male', description: 'Clear and articulate - American' },
+    { id: 'john', name: 'John', gender: 'male', description: 'Friendly conversational - American' },
+    { id: 'emma', name: 'Emma', gender: 'female', description: 'Young and energetic - British' },
+    { id: 'ryan', name: 'Ryan', gender: 'male', description: 'Confident and clear - American' },
 ];
 
 // Parse phone numbers utility endpoint
