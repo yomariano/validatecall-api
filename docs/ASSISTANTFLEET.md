@@ -14,11 +14,11 @@ Register the AssistantFleet webhook for `call.ended` at `https://api.validatecal
 
 Create agents through ValidateCall's Voice Agents screen. Only agents created in this local workspace are listed and editable. Browser tests use a five-minute, assistant-scoped token and a two-minute test duration. The carrier is not involved in browser tests.
 
-## Dedicated numbers — deliberately not configured
+## Dedicated numbers
 
-Per the owner's instruction, do not import, bind, purchase, reassign or call from any existing client number. Subscription upgrades/cancellations no longer buy or release carrier numbers.
+On 13 September 2026, the owner explicitly assigned +35316875367 to ValidateCall and authorized one test to their own phone. That number is configured for the mariano@validatecall.com AssistantFleet workspace, with the ValidateCall TeXML connection and native local registry. The test completed in 63 seconds and its signed webhook updated ValidateCall successfully. Do not import, bind, purchase, reassign or call from other client numbers. Subscription upgrades/cancellations do not buy or release carrier numbers.
 
-When new dedicated ValidateCall numbers are explicitly authorized in the future:
+For additional dedicated numbers explicitly authorized in the future:
 
 1. Configure the ValidateCall AssistantFleet workspace's Telnyx credentials and TeXML application per the upstream guide. Never alter the existing client application or number bindings.
 2. Add each newly authorized number to the ValidateCall workspace in AssistantFleet as provider `telnyx`.
@@ -27,4 +27,4 @@ When new dedicated ValidateCall numbers are explicitly authorized in the future:
 
 Routing uses the actual destination country (including US/Canada sharing +1), rejects ambiguous numbers and extensions, excludes other users, flags, legacy providers and depleted numbers, and never falls back to a foreign or shared demo number. Campaign readiness simulates remaining batch capacity without placing calls or charging quota. The outbound switch defaults to off and is checked by immediate, batch, scheduled and workflow dispatch.
 
-No end-to-end telephone call has been performed during this setup. Country routing and provider payloads are tested with mocked HTTP requests; live telephone validation remains intentionally disabled.
+Outbound calling was restored to disabled after the authorized test; schedulers remain disabled. The current agent is **VoiceFleet — Trades Demo Outreach** (GPT Live / Luna / low). See [the versioned sales playbook](agents/voicefleet-trades-outreach.md) for its instructions, product sources and operating limits. Calendar booking and automated follow-up are not attached to this agent; it captures requests for confirmation instead of claiming actions occurred.
