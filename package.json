@@ -20,6 +20,7 @@
     "express": "^4.21.2",
     "google-auth-library": "^11.0.2",
     "ipaddr.js": "^2.3.0",
+    "libphonenumber-js": "^1.13.13",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "pg": "^8.23.0",

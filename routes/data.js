@@ -596,6 +596,20 @@ router.post('/calls', async (req, res) => {
 
         const { leadId, campaignId, vapiCallId, phoneNumber, customerName, status } = req.body;
 
+        // Dispatch already creates the call. Attach campaign/lead references without
+        // overwriting a webhook's completed status or inserting a duplicate dial ID.
+        if (vapiCallId) {
+            const existing = await db.from('calls').select('id').eq('vapi_call_id',vapiCallId).maybeSingle();
+            if (existing.error) throw existing.error;
+            if (existing.data) {
+                const linked = await db.from('calls').update({ lead_id:leadId, campaign_id:campaignId })
+                    .eq('id',existing.data.id).select().single();
+                if (linked.error) throw linked.error;
+                return res.json(linked.data);
+            }
+        }
+
+
         const { data, error } = await db
             .from('calls')
             .insert({

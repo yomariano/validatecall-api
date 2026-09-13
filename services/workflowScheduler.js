@@ -1,4 +1,4 @@
-import { recordVapiCallOwner } from './vapiOwnership.js';
+import { dispatchFleetCall } from './assistantFleet.js';
 import { runClaimedJob } from './jobClaims.js';
 /**
  * Multi-Channel Workflow Scheduler
@@ -14,10 +14,6 @@ import { sendSequenceEmail } from './emailTracking.js';
 import { generatePersonalizedContent } from './emailPersonalization.js';
 
 const POLL_BATCH_SIZE = 50;
-
-// Clean environment variables
-const cleanEnvVar = (val) => val?.replace(/["';]/g, '').trim();
-const vapiApiKey = cleanEnvVar(process.env.VAPI_API_KEY);
 
 const db = createDatabase();
 
@@ -332,127 +328,17 @@ class WorkflowScheduler {
      * Execute a voice call step
      */
     async executeCallStep(enrollment, step, workflow) {
-        const { lead, user_id, id: enrollmentId, personalized_data } = enrollment;
-
-        if (!vapiApiKey) {
-            return { success: false, error: 'VAPI not configured' };
-        }
-
-        if (!lead.phone) {
-            return { success: false, error: 'Lead has no phone number' };
-        }
-
-        // Get assistant ID
-        const assistantId = step.call_assistant_id || workflow.default_assistant_id;
-        if (!assistantId) {
-            return { success: false, error: 'No assistant configured for call' };
-        }
-
-        // Get campaign context
-        let productIdea = '';
-        let companyContext = '';
-
-        if (workflow.campaign_id) {
-            const { data: campaign } = await db
-                .from('campaigns')
-                .select('product_idea, company_context')
-                .eq('id', workflow.campaign_id)
-                .single();
-
-            if (campaign) {
-                productIdea = campaign.product_idea || '';
-                companyContext = campaign.company_context || '';
-            }
-        }
-
-        // Add personalized context for the AI
-        const personalizedData = personalized_data || {};
-        const callContext = `
-${companyContext}
-
-LEAD INFO:
-- Business: ${lead.name}
-- Industry: ${lead.category || 'Unknown'}
-- Location: ${lead.city || 'Unknown'}
-
-${step.call_script_context || ''}
-
-${personalizedData.openingLine ? `Opening suggestion: ${personalizedData.openingLine}` : ''}
-${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPoint}` : ''}
-        `.trim();
-
+        const { lead, user_id } = enrollment;
         try {
-            // Initiate VAPI call
-            const response = await fetch('https://api.vapi.ai/call', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${vapiApiKey}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    assistantId,
-                    phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID,
-                    customer: {
-                        number: lead.phone,
-                        name: lead.name,
-                    },
-                    assistantOverrides: {
-                        firstMessage: `Hi, is this ${personalizedData.firstName || lead.name}?`,
-                        model: {
-                            messages: [
-                                {
-                                    role: 'system',
-                                    content: callContext,
-                                }
-                            ]
-                        }
-                    },
-                    metadata: {
-                        workflowId: workflow.id,
-                        enrollmentId,
-                        stepNumber: step.step_number,
-                        leadId: lead.id,
-                        userId: user_id,
-                    }
-                }),
+            const result = await dispatchFleetCall(user_id, {
+                phoneNumber: lead.phone, customerName: lead.name,
+                assistantId: step.call_assistant_id || workflow.default_assistant_id,
+                companyContext: step.call_script_context || '',
             });
-
-            if (!response.ok) {
-                const error = await response.text();
-                throw new Error(`VAPI error: ${error}`);
-            }
-
-            const callData = await response.json();
-            await recordVapiCallOwner(db, callData.id, user_id);
-
-            // Log the call initiation
-            await db.from('calls').insert({
-                user_id,
-                lead_id: lead.id,
-                campaign_id: workflow.campaign_id,
-                vapi_call_id: callData.id,
-                phone_number: lead.phone,
-                status: 'queued',
-                metadata: {
-                    workflowId: workflow.id,
-                    enrollmentId,
-                    stepNumber: step.step_number,
-                }
-            });
-
-            return {
-                success: true,
-                actionType: 'call_initiated',
-                callId: callData.id,
-            };
-
-        } catch (error) {
-            return {
-                success: false,
-                actionType: 'call_initiated',
-                error: error.message,
-            };
-        }
+            await db.from('calls').update({ lead_id:lead.id, campaign_id:workflow.campaign_id })
+                .eq('vapi_call_id',result.id).eq('user_id',user_id);
+            return {success:true,actionType:'call_initiated',callId:result.id};
+        } catch(error) { return {success:false,error:error.message}; }
     }
 
     /**

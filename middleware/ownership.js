@@ -25,7 +25,7 @@ export function ownResource(db, table, idColumn = 'id') {
 
 const references = {
     vapiCallId: 'vapi_calls', vapi_call_id: 'vapi_calls',
-    assistantId: 'vapi_assistants', assistant_id: 'vapi_assistants',
+    call_assistant_id: 'vapi_assistants', default_assistant_id: 'vapi_assistants', selectedAgentId: 'vapi_assistants', selected_agent_id: 'vapi_assistants', assistantId: 'vapi_assistants', assistant_id: 'vapi_assistants',
     leadId: 'leads', lead_id: 'leads', leadIds: 'leads', lead_ids: 'leads',
     campaignId: 'campaigns', campaign_id: 'campaigns',
     sequenceId: 'email_sequences', sequence_id: 'email_sequences',

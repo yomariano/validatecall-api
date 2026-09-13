@@ -1,15 +1,17 @@
 import 'dotenv/config';
 import express from 'express';
+import { assistantFleetWebhook } from './routes/assistantFleetWebhook.js';
 import cors from 'cors';
 import { createApiAuth } from './middleware/auth.js';
 
 // Import routes
 import researchRoutes from './routes/research.js';
 import { researchConfigured } from './services/webResearch.js';
+import telephonyRoutes from './routes/telephony.js';
 import dataRoutes from './routes/data.js';
 import authRoutes from './routes/auth.js';
 import { database } from './db/database.js';
-import vapiRoutes from './routes/vapi.js';
+import voiceRoutes from './routes/voice.js';
 import stripeRoutes from './routes/stripe.js';
 import scheduledRoutes from './routes/scheduled.js';
 import claudeRoutes from './routes/claude.js';
@@ -52,6 +54,7 @@ app.use(['/api/stripe/webhook', '/api/billing/webhook'], express.raw({ type: 'ap
 // Resend webhook also needs raw body for signature verification
 app.use('/api/resend/webhook', express.raw({ type: 'application/json' }));
 
+app.post('/api/voice/assistantfleet-webhook', express.raw({type:'application/json',limit:'2mb'}), assistantFleetWebhook);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -69,9 +72,9 @@ app.get('/health', (req, res) => {
         services: {
             postgres: !!process.env.DATABASE_URL,
             research: researchConfigured(),
-            vapi: !!process.env.VAPI_API_KEY,
+            assistantfleet: !!process.env.ASSISTANTFLEET_API_KEY,
             stripe: !!process.env.STRIPE_SECRET_KEY,
-            twilio: !!process.env.TWILIO_ACCOUNT_SID,
+            telnyx: !!process.env.TELNYX_API_KEY,
             claude: !!process.env.CLAUDE_API_URL,
             resend: !!process.env.RESEND_API_KEY,
             scheduler: process.env.RUN_SCHEDULERS === 'true',
@@ -109,8 +112,10 @@ app.use('/api/auth', authRoutes);
 app.use('/api', createApiAuth());
 
 // API Routes
+app.use('/api/telephony', telephonyRoutes);
 app.use('/api/data', dataRoutes);
-app.use('/api/vapi', vapiRoutes);
+app.use('/api/voice', voiceRoutes);
+app.use('/api/vapi', voiceRoutes); // Compatibility for older tabs; uses AssistantFleet only.
 app.use('/api/stripe', stripeRoutes);
 app.use('/api/billing', stripeRoutes);  // Alias for billing endpoints
 app.use('/api/scheduled', scheduledRoutes);

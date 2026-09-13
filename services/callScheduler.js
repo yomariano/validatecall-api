@@ -1,10 +1,8 @@
-import { recordVapiCallOwner } from './vapiOwnership.js';
+import { dispatchFleetCall } from './assistantFleet.js';
 import { claimScheduledCall } from './jobClaims.js';
 import cron from 'node-cron';
 import { createDatabase } from '../db/database.js';
 
-const VAPI_API_URL = 'https://api.vapi.ai';
-const VAPI_API_KEY = process.env.VAPI_API_KEY;
 
 const RETRY_DELAY_MINUTES = 10;
 const POLL_BATCH_SIZE = 10;
@@ -130,96 +128,15 @@ class CallScheduler {
         // Mark as in_progress
         if (!await claimScheduledCall(db, scheduledCall)) return;
 
-        let providerRequestStarted = false;
         try {
-            // Get available phone number for the user
-            const userPhone = await this.getUserPhoneNumber(user_id);
-
-            if (!userPhone) {
-                throw new Error('No available phone numbers - daily limit reached or none configured');
-            }
-
-            // Build call payload
-            const callPayload = {
-                phoneNumberId: userPhone.phone_number_id,
-                customer: {
-                    number: phone_number,
-                    name: customer_name || 'Prospect',
-                },
-            };
-
-            // Configure assistant
-            if (assistant_id) {
-                callPayload.assistantId = assistant_id;
-                if (product_idea) {
-                    callPayload.assistantOverrides = {
-                        model: {
-                            messages: [{
-                                role: 'system',
-                                content: this.buildSystemPrompt(product_idea, company_context)
-                            }]
-                        },
-                        firstMessage: this.buildFirstMessage(product_idea)
-                    };
-                }
-            } else {
-                // Create inline assistant
-                callPayload.assistant = this.createMarketResearchAssistant(product_idea, company_context);
-            }
-
-            // Make the VAPI call
-            providerRequestStarted = true;
-            const response = await fetch(`${VAPI_API_URL}/call/phone`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${VAPI_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(callPayload),
-                signal: AbortSignal.timeout(30000),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || `VAPI API error: ${response.status}`);
-            }
-
-            const vapiResponse = await response.json();
-            await recordVapiCallOwner(db, vapiResponse.id, user_id);
-
-            // Increment phone usage
-            await this.incrementPhoneUsage(userPhone.phone_number_id, user_id, vapiResponse.id);
-
-            // Store call record in calls table
-            const { data: callRecord } = await db.from('calls').insert({
-                user_id,
-                lead_id,
-                vapi_call_id: vapiResponse.id,
-                phone_number,
-                customer_name,
-                outbound_phone_number_id: userPhone.phone_number_id,
-                outbound_phone_number: userPhone.phone_number,
-                status: 'initiated',
-                raw_response: vapiResponse,
-            }).select().single();
-
-            // Mark scheduled call as completed
-            await this.updateStatus(id, 'completed', {
-                call_id: callRecord?.id,
-                vapi_call_id: vapiResponse.id,
-                completed_at: new Date().toISOString(),
-            });
-
-            console.log(`✅ Scheduled call ${id} completed - VAPI call ID: ${vapiResponse.id}`);
-
-        } catch (error) {
-            console.error(`❌ Scheduled call ${id} failed:`, error.message);
-            if (providerRequestStarted) {
-                // A timeout or database failure does not prove the provider did not dial.
-                await this.updateStatus(id, 'failed', { last_error: `Provider outcome needs review before retry: ${error.message}` });
-            } else {
-                await this.handleCallFailure(scheduledCall, error);
-            }
+            const result = await dispatchFleetCall(user_id, { phoneNumber:phone_number, customerName:customer_name,
+                productIdea:product_idea, companyContext:company_context, assistantId:assistant_id });
+            const { data: call } = await db.from('calls').select('id').eq('vapi_call_id',result.id).eq('user_id',user_id).single();
+            if (call && lead_id) await db.from('calls').update({lead_id}).eq('id',call.id).eq('user_id',user_id);
+            await this.updateStatus(id,'completed',{call_id:call?.id,vapi_call_id:result.id,completed_at:new Date().toISOString()});
+        } catch(error) {
+            if (error.providerRequestStarted) await this.updateStatus(id,'failed',{last_error:'Provider outcome needs review before retry.'});
+            else await this.handleCallFailure(scheduledCall,error);
         }
     }
 
@@ -273,36 +190,6 @@ class CallScheduler {
     /**
      * Get next available phone number for a user
      */
-    async getUserPhoneNumber(userId) {
-        const today = new Date().toISOString().split('T')[0];
-
-        // Reset daily counters if needed
-        await db
-            .from('user_phone_numbers')
-            .update({ daily_calls_used: 0, last_reset_date: today })
-            .eq('user_id', userId)
-            .lt('last_reset_date', today);
-
-        // Get phone with lowest usage under limit
-        const { data: phoneNumber, error } = await db
-            .from('user_phone_numbers')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('status', 'active')
-            .order('daily_calls_used', { ascending: true })
-            .limit(1)
-            .single();
-
-        if (error || !phoneNumber) {
-            return null;
-        }
-
-        if (phoneNumber.daily_calls_used >= phoneNumber.daily_calls_limit) {
-            return null;
-        }
-
-        return phoneNumber;
-    }
 
     /**
      * Increment phone usage counter
