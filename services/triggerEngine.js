@@ -3,13 +3,10 @@
  * Background job that checks for trigger conditions and sends automated emails
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { sendTriggerEmail } from './campaignEmail.js';
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 // Check interval (every 15 minutes)
 const CHECK_INTERVAL = 15 * 60 * 1000;
@@ -52,7 +49,7 @@ export function stop() {
 async function runTriggerChecks() {
     try {
         // Get all active triggers
-        const { data: triggers, error } = await supabase
+        const { data: triggers, error } = await db
             .from('automated_triggers')
             .select('*')
             .eq('is_active', true);
@@ -101,7 +98,7 @@ async function processTrigger(trigger) {
             });
 
             // Log the trigger send
-            await supabase.from('trigger_logs').insert({
+            await db.from('trigger_logs').insert({
                 trigger_id: trigger.id,
                 user_id: user.id,
                 trigger_type: trigger.trigger_type,
@@ -117,7 +114,7 @@ async function processTrigger(trigger) {
 
             // Update trigger stats
             if (result.success) {
-                await supabase
+                await db
                     .from('automated_triggers')
                     .update({ times_triggered: trigger.times_triggered + 1 })
                     .eq('id', trigger.id);
@@ -143,7 +140,7 @@ async function getUsersForTrigger(triggerType) {
         // =============================================
         case 'usage_50': {
             // Users at 50% usage (leads or calls)
-            const { data } = await supabase
+            const { data } = await db
                 .from('free_tier_usage')
                 .select('user_id, leads_used, calls_used, profiles!inner(id, email, full_name, plan)')
                 .or('leads_used.gte.5,calls_used.gte.3'); // 50% of 10 leads or 5 calls
@@ -159,7 +156,7 @@ async function getUsersForTrigger(triggerType) {
         }
 
         case 'usage_80': {
-            const { data } = await supabase
+            const { data } = await db
                 .from('free_tier_usage')
                 .select('user_id, leads_used, calls_used, profiles!inner(id, email, full_name, plan)')
                 .or('leads_used.gte.8,calls_used.gte.4'); // 80% of limits
@@ -175,7 +172,7 @@ async function getUsersForTrigger(triggerType) {
         }
 
         case 'usage_90': {
-            const { data } = await supabase
+            const { data } = await db
                 .from('free_tier_usage')
                 .select('user_id, leads_used, calls_used, profiles!inner(id, email, full_name, plan)')
                 .or('leads_used.gte.9,calls_used.gte.5'); // 90% of limits
@@ -191,7 +188,7 @@ async function getUsersForTrigger(triggerType) {
         }
 
         case 'usage_100': {
-            const { data } = await supabase
+            const { data } = await db
                 .from('free_tier_usage')
                 .select('user_id, leads_used, calls_used, profiles!inner(id, email, full_name, plan)')
                 .or('leads_used.gte.10,calls_used.gte.5');
@@ -212,7 +209,7 @@ async function getUsersForTrigger(triggerType) {
         case 'inactive_3d': {
             const cutoff = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString();
             const maxAge = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
-            const { data } = await supabase
+            const { data } = await db
                 .from('profiles')
                 .select('id, email, full_name, last_login_at')
                 .lt('last_login_at', cutoff)
@@ -224,7 +221,7 @@ async function getUsersForTrigger(triggerType) {
         case 'inactive_7d': {
             const cutoff = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
             const maxAge = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
-            const { data } = await supabase
+            const { data } = await db
                 .from('profiles')
                 .select('id, email, full_name, last_login_at')
                 .lt('last_login_at', cutoff)
@@ -236,7 +233,7 @@ async function getUsersForTrigger(triggerType) {
         case 'inactive_14d': {
             const cutoff = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
             const maxAge = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
-            const { data } = await supabase
+            const { data } = await db
                 .from('profiles')
                 .select('id, email, full_name, last_login_at')
                 .lt('last_login_at', cutoff)
@@ -252,7 +249,7 @@ async function getUsersForTrigger(triggerType) {
             // Users who signed up 2 days ago (within a 24-hour window)
             const start = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString();
             const end = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
-            const { data } = await supabase
+            const { data } = await db
                 .from('profiles')
                 .select('id, email, full_name, created_at')
                 .gte('created_at', start)
@@ -265,7 +262,7 @@ async function getUsersForTrigger(triggerType) {
             // Users who signed up 5 days ago (within a 24-hour window)
             const start = new Date(now - 6 * 24 * 60 * 60 * 1000).toISOString();
             const end = new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString();
-            const { data } = await supabase
+            const { data } = await db
                 .from('profiles')
                 .select('id, email, full_name, created_at')
                 .gte('created_at', start)
@@ -284,7 +281,7 @@ async function getUsersForTrigger(triggerType) {
             // Check for users who viewed pricing but didn't upgrade
             // This requires pricing_page_views table or event tracking
             // For now, return empty - implement when event tracking is added
-            const { data: events } = await supabase
+            const { data: events } = await db
                 .from('user_events')
                 .select('user_id, created_at, profiles!inner(id, email, full_name, plan)')
                 .eq('event_type', 'pricing_page_view')
@@ -316,7 +313,7 @@ async function getUsersForTrigger(triggerType) {
             if (dayOfWeek !== 1) return []; // Only on Mondays
 
             const cutoff = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
-            const { data } = await supabase
+            const { data } = await db
                 .from('profiles')
                 .select('id, email, full_name, last_login_at')
                 .gte('last_login_at', cutoff);
@@ -338,7 +335,7 @@ async function checkAlreadySent(triggerId, userId, triggerType) {
     const daysBack = triggerType.startsWith('usage') ? 7 : 30;
     const cutoff = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
 
-    const { data } = await supabase
+    const { data } = await db
         .from('trigger_logs')
         .select('id')
         .eq('trigger_id', triggerId)
@@ -404,7 +401,7 @@ function personalizeContent(content, user, trigger) {
  * Manually trigger a check for a specific trigger type (for testing)
  */
 export async function manualTrigger(triggerType) {
-    const { data: trigger } = await supabase
+    const { data: trigger } = await db
         .from('automated_triggers')
         .select('*')
         .eq('trigger_type', triggerType)

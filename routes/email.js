@@ -1,17 +1,17 @@
+import { requireAdmin } from '../middleware/adminAuth.js';
+import { requireWebhookSecret } from '../middleware/webhookAuth.js';
+import { ownResource, ownReferences } from '../middleware/ownership.js';
 /**
  * Email Routes
  * Endpoints for triggering transactional emails
  */
 
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { sendWelcomeEmail, sendUsageAlertEmail, sendColdEmail, generateColdEmailHtml, isConfigured } from '../services/email.js';
 import { getBrandSettings } from '../services/userSettings.js';
 
-// Allow self-signed certificates in development
-if (process.env.NODE_ENV !== 'production') {
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-}
+
 
 // Clean up URL and API key (remove ALL quotes, semicolons, whitespace)
 const cleanEnvVar = (val) => val?.replace(/["';]/g, '').trim();
@@ -45,16 +45,17 @@ const promptClaude = async (prompt, model = 'sonnet') => {
 
 const router = Router();
 
-// Initialize Supabase client with service role for backend operations
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Initialize PostgreSQL client with service role for backend operations
+const db = createDatabase();
 
 /**
  * GET /api/email/status
  * Check if email service is configured
  */
+router.use((req, res, next) => req.user ? ownReferences(db)(req, res, next) : next());
+router.param('id', ownResource(db, 'email_responses'));
+router.param('leadId', ownResource(db, 'leads'));
+
 router.get('/status', (req, res) => {
     res.json({
         configured: isConfigured(),
@@ -70,7 +71,10 @@ router.get('/status', (req, res) => {
  */
 router.post('/welcome', async (req, res) => {
     try {
-        const { userId, email, name, force } = req.body;
+        const userId = req.user.id;
+        const email = req.user.email;
+        const name = req.user.user_metadata?.full_name;
+        const force = false;
 
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
@@ -79,7 +83,7 @@ router.post('/welcome', async (req, res) => {
         // Check if welcome email was already sent to this user/email (prevent duplicates)
         // Skip check if force=true (for testing/resending)
         if (!force) {
-            const { data: existingEmail } = await supabase
+            const { data: existingEmail } = await db
                 .from('email_logs')
                 .select('id, created_at')
                 .eq('email_type', 'welcome')
@@ -103,7 +107,7 @@ router.post('/welcome', async (req, res) => {
         // If userId provided but no name, fetch from profile
         let userName = name;
         if (userId && !name) {
-            const { data: profile } = await supabase
+            const { data: profile } = await db
                 .from('profiles')
                 .select('full_name')
                 .eq('id', userId)
@@ -121,7 +125,7 @@ router.post('/welcome', async (req, res) => {
             // Log the email (important for deduplication)
             // Uses unique constraint to prevent race conditions
             try {
-                await supabase.from('email_logs').insert({
+                await db.from('email_logs').insert({
                     user_id: userId || null,
                     email_type: 'welcome',
                     recipient: email,
@@ -151,7 +155,7 @@ router.post('/welcome', async (req, res) => {
  * Send usage alert when user approaches limit
  * Body: { userId, resourceType, used, limit }
  */
-router.post('/usage-alert', async (req, res) => {
+router.post('/usage-alert', requireAdmin, async (req, res) => {
     try {
         const { userId, resourceType, used, limit } = req.body;
 
@@ -162,7 +166,7 @@ router.post('/usage-alert', async (req, res) => {
         }
 
         // Get user profile
-        const { data: profile, error: profileError } = await supabase
+        const { data: profile, error: profileError } = await db
             .from('profiles')
             .select('email, full_name')
             .eq('id', userId)
@@ -174,7 +178,7 @@ router.post('/usage-alert', async (req, res) => {
 
         // Check if alert already sent for this threshold
         const alertType = `usage_alert_${resourceType}_80`;
-        const { data: existingAlert } = await supabase
+        const { data: existingAlert } = await db
             .from('email_logs')
             .select('id')
             .eq('user_id', userId)
@@ -202,7 +206,7 @@ router.post('/usage-alert', async (req, res) => {
 
         if (result.success) {
             try {
-                await supabase.from('email_logs').insert({
+                await db.from('email_logs').insert({
                     user_id: userId,
                     email_type: alertType,
                     recipient: profile.email,
@@ -351,7 +355,7 @@ router.post('/send-cold-email', async (req, res) => {
         if (result.success) {
             // Log the cold email
             try {
-                await supabase.from('email_logs').insert({
+                await db.from('email_logs').insert({
                     user_id: userId || null,
                     email_type: 'cold_email',
                     recipient: toEmail,
@@ -366,7 +370,7 @@ router.post('/send-cold-email', async (req, res) => {
             // Update lead status to contacted if leadId provided
             if (leadId) {
                 try {
-                    await supabase
+                    await db
                         .from('leads')
                         .update({ status: 'contacted', notes: `Cold email sent: ${subject}` })
                         .eq('id', leadId);
@@ -442,7 +446,7 @@ router.post('/test', async (req, res) => {
  * This allows emails to be stored in ValidateCall while also forwarding to Gmail
  * Body: { from, to, subject, text, html, headers }
  */
-router.post('/inbound', async (req, res) => {
+router.post('/inbound', requireWebhookSecret('INBOUND_EMAIL_WEBHOOK_SECRET', 'x-webhook-secret'), async (req, res) => {
     try {
         const { from, to, subject, text, html, headers, rawSize } = req.body;
 
@@ -476,7 +480,7 @@ router.post('/inbound', async (req, res) => {
         let leadId = null;
 
         // Look up user by their verified domain
-        const { data: domainRecord, error: domainError } = await supabase
+        const { data: domainRecord, error: domainError } = await db
             .from('user_domains')
             .select('user_id')
             .ilike('domain_name', toDomain)
@@ -497,7 +501,7 @@ router.post('/inbound', async (req, res) => {
         if (userId) {
 
             // Try to match to an existing lead by email
-            const { data: lead } = await supabase
+            const { data: lead } = await db
                 .from('leads')
                 .select('id')
                 .eq('user_id', userId)
@@ -513,7 +517,7 @@ router.post('/inbound', async (req, res) => {
         const cloudflareEmailId = `cf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
         // Store the inbound email
-        const { data: response, error: insertError } = await supabase
+        const { data: response, error: insertError } = await db
             .from('email_responses')
             .insert({
                 user_id: userId,
@@ -563,7 +567,7 @@ router.post('/track-event', async (req, res) => {
             return res.status(400).json({ error: 'userId and eventType are required' });
         }
 
-        const { error } = await supabase.from('user_events').insert({
+        const { error } = await db.from('user_events').insert({
             user_id: userId,
             event_type: eventType,
             event_data: eventData || null,
@@ -598,7 +602,7 @@ router.get('/responses', async (req, res) => {
 
         const status = req.query.status || 'all';
 
-        let query = supabase
+        let query = db
             .from('email_responses')
             .select(`
                 *,
@@ -636,7 +640,7 @@ router.get('/responses/unread-count', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { count, error } = await supabase
+        const { count, error } = await db
             .from('email_responses')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', userId)
@@ -668,7 +672,7 @@ router.get('/thread/:leadId', async (req, res) => {
         }
 
         // Get sent emails to this lead
-        const { data: sentEmails, error: sentError } = await supabase
+        const { data: sentEmails, error: sentError } = await db
             .from('email_logs')
             .select('*')
             .eq('user_id', userId)
@@ -681,7 +685,7 @@ router.get('/thread/:leadId', async (req, res) => {
         }
 
         // Get received emails from this lead
-        const { data: receivedEmails, error: receivedError } = await supabase
+        const { data: receivedEmails, error: receivedError } = await db
             .from('email_responses')
             .select('*')
             .eq('user_id', userId)
@@ -735,7 +739,7 @@ router.patch('/responses/:id/read', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('email_responses')
             .update({
                 status: 'read',
@@ -773,7 +777,7 @@ router.post('/responses/:id/reply', async (req, res) => {
         }
 
         // Get the original email response
-        const { data: originalResponse, error: fetchError } = await supabase
+        const { data: originalResponse, error: fetchError } = await db
             .from('email_responses')
             .select('*')
             .eq('id', id)
@@ -825,7 +829,7 @@ router.post('/responses/:id/reply', async (req, res) => {
 
         if (result.success) {
             // Log the reply email
-            await supabase.from('email_logs').insert({
+            await db.from('email_logs').insert({
                 user_id: userId,
                 email_type: 'cold_email',
                 recipient: originalResponse.from_email,
@@ -839,7 +843,7 @@ router.post('/responses/:id/reply', async (req, res) => {
             });
 
             // Update original response status
-            await supabase
+            await db
                 .from('email_responses')
                 .update({ status: 'replied' })
                 .eq('id', id);

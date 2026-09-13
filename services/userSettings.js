@@ -6,12 +6,9 @@
 
 import { Resend } from 'resend';
 import sgMail from '@sendgrid/mail';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 // =============================================
 // EMAIL PROVIDER SETTINGS
@@ -24,7 +21,7 @@ const supabase = createClient(
  */
 export async function getEmailProviderSettings(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .select(`
                 email_provider,
@@ -76,7 +73,7 @@ export async function setEmailProvider(userId, provider) {
     }
 
     try {
-        const { error } = await supabase
+        const { error } = await db
             .from('profiles')
             .update({ email_provider: provider })
             .eq('id', userId);
@@ -98,7 +95,7 @@ export async function setEmailProvider(userId, provider) {
  */
 export async function getActiveEmailProvider(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .select('email_provider, resend_api_key, sendgrid_api_key')
             .eq('id', userId)
@@ -144,7 +141,7 @@ export async function getActiveEmailProvider(userId) {
  */
 export async function getResendApiKeyStatus(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .select('resend_api_key, resend_api_key_verified, resend_api_key_verified_at')
             .eq('id', userId)
@@ -175,7 +172,7 @@ export async function getResendApiKeyStatus(userId) {
  */
 export async function getUserResendApiKey(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .select('resend_api_key')
             .eq('id', userId)
@@ -219,7 +216,7 @@ export async function saveResendApiKey(userId, apiKey) {
         }
 
         // Save the API key and set as active provider
-        const { error: updateError } = await supabase
+        const { error: updateError } = await db
             .from('profiles')
             .update({
                 resend_api_key: apiKey,
@@ -256,7 +253,7 @@ export async function saveResendApiKey(userId, apiKey) {
 export async function deleteResendApiKey(userId) {
     try {
         // Check if user has SendGrid configured to fall back to
-        const { data } = await supabase
+        const { data } = await db
             .from('profiles')
             .select('sendgrid_api_key, email_provider')
             .eq('id', userId)
@@ -273,7 +270,7 @@ export async function deleteResendApiKey(userId) {
             updates.email_provider = data.sendgrid_api_key ? 'sendgrid' : null;
         }
 
-        const { error } = await supabase
+        const { error } = await db
             .from('profiles')
             .update(updates)
             .eq('id', userId);
@@ -310,7 +307,7 @@ export async function verifyResendApiKey(userId) {
             const { data: domainsData, error: resendError } = await testResend.domains.list();
 
             if (resendError) {
-                await supabase
+                await db
                     .from('profiles')
                     .update({ resend_api_key_verified: false })
                     .eq('id', userId);
@@ -321,7 +318,7 @@ export async function verifyResendApiKey(userId) {
                 };
             }
 
-            await supabase
+            await db
                 .from('profiles')
                 .update({
                     resend_api_key_verified: true,
@@ -400,7 +397,7 @@ export async function getUserResendDomains(userId) {
  */
 export async function getSendGridApiKeyStatus(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .select('sendgrid_api_key, sendgrid_api_key_verified, sendgrid_api_key_verified_at')
             .eq('id', userId)
@@ -430,7 +427,7 @@ export async function getSendGridApiKeyStatus(userId) {
  */
 export async function getUserSendGridApiKey(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .select('sendgrid_api_key')
             .eq('id', userId)
@@ -486,7 +483,7 @@ export async function saveSendGridApiKey(userId, apiKey) {
         }
 
         // Save the API key and set as active provider
-        const { error: updateError } = await supabase
+        const { error: updateError } = await db
             .from('profiles')
             .update({
                 sendgrid_api_key: apiKey,
@@ -522,7 +519,7 @@ export async function saveSendGridApiKey(userId, apiKey) {
 export async function deleteSendGridApiKey(userId) {
     try {
         // Check if user has Resend configured to fall back to
-        const { data } = await supabase
+        const { data } = await db
             .from('profiles')
             .select('resend_api_key, email_provider')
             .eq('id', userId)
@@ -539,7 +536,7 @@ export async function deleteSendGridApiKey(userId) {
             updates.email_provider = data.resend_api_key ? 'resend' : null;
         }
 
-        const { error } = await supabase
+        const { error } = await db
             .from('profiles')
             .update(updates)
             .eq('id', userId);
@@ -579,7 +576,7 @@ export async function verifySendGridApiKey(userId) {
             });
 
             if (!response.ok) {
-                await supabase
+                await db
                     .from('profiles')
                     .update({ sendgrid_api_key_verified: false })
                     .eq('id', userId);
@@ -590,7 +587,7 @@ export async function verifySendGridApiKey(userId) {
                 };
             }
 
-            await supabase
+            await db
                 .from('profiles')
                 .update({
                     sendgrid_api_key_verified: true,
@@ -688,7 +685,7 @@ export async function getUserSendGridSenders(userId) {
  */
 export async function getBrandSettings(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .select('brand_logo_url, brand_color, brand_name, brand_cta_text, brand_cta_url')
             .eq('id', userId)
@@ -742,7 +739,7 @@ export async function saveBrandSettings(userId, { brandLogoUrl, brandColor, bran
         if (brandCtaText !== undefined) updates.brand_cta_text = brandCtaText || null;
         if (brandCtaUrl !== undefined) updates.brand_cta_url = brandCtaUrl || null;
 
-        const { error } = await supabase
+        const { error } = await db
             .from('profiles')
             .update(updates)
             .eq('id', userId);

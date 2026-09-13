@@ -10,17 +10,14 @@
  * - followUpHook: Reason for follow-up emails
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 
 // Clean up URL and API key
 const cleanEnvVar = (val) => val?.replace(/["';]/g, '').trim();
 const claudeApiUrl = cleanEnvVar(process.env.CLAUDE_API_URL);
 const claudeApiKey = cleanEnvVar(process.env.CLAUDE_API_KEY);
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 // Rate limiting: minimum delay between API calls
 const MIN_DELAY_MS = 1000;
@@ -89,7 +86,7 @@ export async function generatePersonalizedContent(lead, sequence, userId) {
     let productIdea = '';
 
     if (sequence.campaign_id) {
-        const { data: campaign } = await supabase
+        const { data: campaign } = await db
             .from('campaigns')
             .select('product_idea, company_context')
             .eq('id', sequence.campaign_id)
@@ -162,7 +159,7 @@ Return ONLY valid JSON in this exact format:
  */
 export async function batchPersonalizeLeads(sequenceId, leadIds) {
     // Get sequence and campaign info
-    const { data: sequence } = await supabase
+    const { data: sequence } = await db
         .from('email_sequences')
         .select('*, campaign:campaigns(*)')
         .eq('id', sequenceId)
@@ -181,7 +178,7 @@ export async function batchPersonalizeLeads(sequenceId, leadIds) {
     for (const leadId of leadIds) {
         try {
             // Get lead data
-            const { data: lead } = await supabase
+            const { data: lead } = await db
                 .from('leads')
                 .select('*')
                 .eq('id', leadId)
@@ -197,7 +194,7 @@ export async function batchPersonalizeLeads(sequenceId, leadIds) {
             const personalizedData = await generatePersonalizedContent(lead, sequence, sequence.user_id);
 
             // Update enrollment with personalized data
-            await supabase
+            await db
                 .from('email_sequence_enrollments')
                 .update({
                     personalized_data: personalizedData,

@@ -4,16 +4,13 @@
  */
 
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { requireAdmin } from '../middleware/adminAuth.js';
 import { sendCampaignEmail } from '../services/campaignEmail.js';
 
 const router = Router();
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 // Apply admin auth to all routes
 router.use(requireAdmin);
@@ -36,13 +33,13 @@ router.get('/users/segments', async (req, res) => {
 
         // Get counts for each segment
         const [all, free, paid, inactive3d, inactive7d, inactive14d, inactive30d] = await Promise.all([
-            supabase.from('profiles').select('id', { count: 'exact', head: true }),
-            supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('plan', 'free'),
-            supabase.from('profiles').select('id', { count: 'exact', head: true }).neq('plan', 'free'),
-            supabase.from('profiles').select('id', { count: 'exact', head: true }).lt('last_login_at', day3Ago),
-            supabase.from('profiles').select('id', { count: 'exact', head: true }).lt('last_login_at', day7Ago),
-            supabase.from('profiles').select('id', { count: 'exact', head: true }).lt('last_login_at', day14Ago),
-            supabase.from('profiles').select('id', { count: 'exact', head: true }).lt('last_login_at', day30Ago),
+            db.from('profiles').select('id', { count: 'exact', head: true }),
+            db.from('profiles').select('id', { count: 'exact', head: true }).eq('plan', 'free'),
+            db.from('profiles').select('id', { count: 'exact', head: true }).neq('plan', 'free'),
+            db.from('profiles').select('id', { count: 'exact', head: true }).lt('last_login_at', day3Ago),
+            db.from('profiles').select('id', { count: 'exact', head: true }).lt('last_login_at', day7Ago),
+            db.from('profiles').select('id', { count: 'exact', head: true }).lt('last_login_at', day14Ago),
+            db.from('profiles').select('id', { count: 'exact', head: true }).lt('last_login_at', day30Ago),
         ]);
 
         res.json({
@@ -70,7 +67,7 @@ router.get('/users', async (req, res) => {
     try {
         const { segment = 'all', limit = 100, offset = 0 } = req.query;
 
-        let query = supabase
+        let query = db
             .from('profiles')
             .select('id, email, full_name, plan, created_at, last_login_at')
             .order('created_at', { ascending: false })
@@ -122,7 +119,7 @@ router.get('/campaigns', async (req, res) => {
     try {
         const { status, limit = 50 } = req.query;
 
-        let query = supabase
+        let query = db
             .from('email_campaigns')
             .select('*')
             .order('created_at', { ascending: false })
@@ -155,7 +152,7 @@ router.post('/campaigns', async (req, res) => {
             return res.status(400).json({ error: 'name, subject, and bodyHtml are required' });
         }
 
-        const { data: campaign, error } = await supabase
+        const { data: campaign, error } = await db
             .from('email_campaigns')
             .insert({
                 name,
@@ -198,7 +195,7 @@ router.patch('/campaigns/:id', async (req, res) => {
         if (updates.status) dbUpdates.status = updates.status;
         if (updates.scheduledAt !== undefined) dbUpdates.scheduled_at = updates.scheduledAt;
 
-        const { data: campaign, error } = await supabase
+        const { data: campaign, error } = await db
             .from('email_campaigns')
             .update(dbUpdates)
             .eq('id', id)
@@ -223,7 +220,7 @@ router.post('/campaigns/:id/send', async (req, res) => {
         const { id } = req.params;
 
         // Get campaign
-        const { data: campaign, error: campaignError } = await supabase
+        const { data: campaign, error: campaignError } = await db
             .from('email_campaigns')
             .select('*')
             .eq('id', id)
@@ -245,7 +242,7 @@ router.post('/campaigns/:id/send', async (req, res) => {
         }
 
         // Update campaign status
-        await supabase
+        await db
             .from('email_campaigns')
             .update({
                 status: 'sending',
@@ -277,7 +274,7 @@ router.delete('/campaigns/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
-        const { error } = await supabase
+        const { error } = await db
             .from('email_campaigns')
             .delete()
             .eq('id', id);
@@ -301,7 +298,7 @@ router.delete('/campaigns/:id', async (req, res) => {
  */
 router.get('/templates', async (req, res) => {
     try {
-        const { data: templates, error } = await supabase
+        const { data: templates, error } = await db
             .from('email_templates')
             .select('*')
             .order('name');
@@ -323,7 +320,7 @@ router.post('/templates', async (req, res) => {
     try {
         const { name, description, subject, bodyHtml, bodyText, templateType = 'marketing', variables } = req.body;
 
-        const { data: template, error } = await supabase
+        const { data: template, error } = await db
             .from('email_templates')
             .insert({
                 name,
@@ -356,7 +353,7 @@ router.post('/templates', async (req, res) => {
  */
 router.get('/triggers', async (req, res) => {
     try {
-        const { data: triggers, error } = await supabase
+        const { data: triggers, error } = await db
             .from('automated_triggers')
             .select('*')
             .order('trigger_type');
@@ -390,7 +387,7 @@ router.patch('/triggers/:id', async (req, res) => {
         if (updates.discountPercent !== undefined) dbUpdates.discount_percent = updates.discountPercent;
         if (updates.discountExpiresHours !== undefined) dbUpdates.discount_expires_hours = updates.discountExpiresHours;
 
-        const { data: trigger, error } = await supabase
+        const { data: trigger, error } = await db
             .from('automated_triggers')
             .update(dbUpdates)
             .eq('id', id)
@@ -430,7 +427,7 @@ router.post('/triggers', async (req, res) => {
             return res.status(400).json({ error: 'name, triggerType, subject, and bodyHtml required' });
         }
 
-        const { data: trigger, error } = await supabase
+        const { data: trigger, error } = await db
             .from('automated_triggers')
             .insert({
                 name,
@@ -469,7 +466,7 @@ router.get('/analytics', async (req, res) => {
     try {
         const [campaignStats, triggerStats, recentSends] = await Promise.all([
             // Campaign stats
-            supabase
+            db
                 .from('email_campaigns')
                 .select('status, sent_count, failed_count')
                 .then(({ data }) => {
@@ -483,7 +480,7 @@ router.get('/analytics', async (req, res) => {
                 }),
 
             // Trigger stats
-            supabase
+            db
                 .from('trigger_logs')
                 .select('trigger_type, status')
                 .then(({ data }) => {
@@ -496,7 +493,7 @@ router.get('/analytics', async (req, res) => {
                 }),
 
             // Recent sends
-            supabase
+            db
                 .from('email_logs')
                 .select('email_type, recipient, status, created_at')
                 .order('created_at', { ascending: false })
@@ -521,7 +518,7 @@ router.get('/analytics', async (req, res) => {
 async function getUsersBySegment(segment) {
     const now = new Date();
 
-    let query = supabase
+    let query = db
         .from('profiles')
         .select('id, email, full_name, plan');
 
@@ -571,7 +568,7 @@ async function sendCampaignEmails(campaign, users) {
             });
 
             // Log recipient
-            await supabase.from('campaign_recipients').insert({
+            await db.from('campaign_recipients').insert({
                 campaign_id: campaign.id,
                 user_id: user.id,
                 email: user.email,
@@ -596,7 +593,7 @@ async function sendCampaignEmails(campaign, users) {
     }
 
     // Update campaign stats
-    await supabase
+    await db
         .from('email_campaigns')
         .update({
             status: 'sent',

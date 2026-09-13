@@ -1,5 +1,7 @@
+import { recordVapiCallOwner } from './vapiOwnership.js';
+import { claimScheduledCall } from './jobClaims.js';
 import cron from 'node-cron';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 
 const VAPI_API_URL = 'https://api.vapi.ai';
 const VAPI_API_KEY = process.env.VAPI_API_KEY;
@@ -7,11 +9,8 @@ const VAPI_API_KEY = process.env.VAPI_API_KEY;
 const RETRY_DELAY_MINUTES = 10;
 const POLL_BATCH_SIZE = 10;
 
-// Initialize Supabase with service role for backend operations
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Initialize PostgreSQL with service role for backend operations
+const db = createDatabase();
 
 /**
  * CallScheduler - Manages scheduled phone calls
@@ -84,7 +83,7 @@ class CallScheduler {
      * Get pending calls that are due now
      */
     async getDuePendingCalls() {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scheduled_calls')
             .select('*')
             .eq('status', 'pending')
@@ -104,7 +103,7 @@ class CallScheduler {
      * Get retry calls that are due now
      */
     async getDueRetryCalls() {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scheduled_calls')
             .select('*')
             .eq('status', 'retry_scheduled')
@@ -129,8 +128,9 @@ class CallScheduler {
         console.log(`📞 Executing scheduled call ${id} to ${phone_number}`);
 
         // Mark as in_progress
-        await this.updateStatus(id, 'in_progress', { executed_at: new Date().toISOString() });
+        if (!await claimScheduledCall(db, scheduledCall)) return;
 
+        let providerRequestStarted = false;
         try {
             // Get available phone number for the user
             const userPhone = await this.getUserPhoneNumber(user_id);
@@ -168,6 +168,7 @@ class CallScheduler {
             }
 
             // Make the VAPI call
+            providerRequestStarted = true;
             const response = await fetch(`${VAPI_API_URL}/call/phone`, {
                 method: 'POST',
                 headers: {
@@ -175,6 +176,7 @@ class CallScheduler {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(callPayload),
+                signal: AbortSignal.timeout(30000),
             });
 
             if (!response.ok) {
@@ -183,12 +185,13 @@ class CallScheduler {
             }
 
             const vapiResponse = await response.json();
+            await recordVapiCallOwner(db, vapiResponse.id, user_id);
 
             // Increment phone usage
             await this.incrementPhoneUsage(userPhone.phone_number_id, user_id, vapiResponse.id);
 
             // Store call record in calls table
-            const { data: callRecord } = await supabase.from('calls').insert({
+            const { data: callRecord } = await db.from('calls').insert({
                 user_id,
                 lead_id,
                 vapi_call_id: vapiResponse.id,
@@ -211,7 +214,12 @@ class CallScheduler {
 
         } catch (error) {
             console.error(`❌ Scheduled call ${id} failed:`, error.message);
-            await this.handleCallFailure(scheduledCall, error);
+            if (providerRequestStarted) {
+                // A timeout or database failure does not prove the provider did not dial.
+                await this.updateStatus(id, 'failed', { last_error: `Provider outcome needs review before retry: ${error.message}` });
+            } else {
+                await this.handleCallFailure(scheduledCall, error);
+            }
         }
     }
 
@@ -248,7 +256,7 @@ class CallScheduler {
      * Update scheduled call status
      */
     async updateStatus(id, status, additionalUpdates = {}) {
-        const { error } = await supabase
+        const { error } = await db
             .from('scheduled_calls')
             .update({
                 status,
@@ -269,14 +277,14 @@ class CallScheduler {
         const today = new Date().toISOString().split('T')[0];
 
         // Reset daily counters if needed
-        await supabase
+        await db
             .from('user_phone_numbers')
             .update({ daily_calls_used: 0, last_reset_date: today })
             .eq('user_id', userId)
             .lt('last_reset_date', today);
 
         // Get phone with lowest usage under limit
-        const { data: phoneNumber, error } = await supabase
+        const { data: phoneNumber, error } = await db
             .from('user_phone_numbers')
             .select('*')
             .eq('user_id', userId)
@@ -300,7 +308,7 @@ class CallScheduler {
      * Increment phone usage counter
      */
     async incrementPhoneUsage(phoneNumberId, userId, callId = null) {
-        const { error: rpcError } = await supabase.rpc('increment_phone_usage', {
+        const { error: rpcError } = await db.rpc('increment_phone_usage', {
             p_phone_number_id: phoneNumberId,
             p_user_id: userId,
             p_call_id: callId
@@ -311,7 +319,7 @@ class CallScheduler {
             console.log('  [Scheduler] RPC not available, using fallback increment');
 
             // Get current values
-            const { data: current, error: readError } = await supabase
+            const { data: current, error: readError } = await db
                 .from('user_phone_numbers')
                 .select('daily_calls_used, total_calls_made')
                 .eq('phone_number_id', phoneNumberId)
@@ -324,7 +332,7 @@ class CallScheduler {
             }
 
             // Update with incremented values
-            const { error: updateError } = await supabase
+            const { error: updateError } = await db
                 .from('user_phone_numbers')
                 .update({
                     daily_calls_used: (current.daily_calls_used || 0) + 1,

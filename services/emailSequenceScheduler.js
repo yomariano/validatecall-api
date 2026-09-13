@@ -1,3 +1,4 @@
+import { runClaimedJob } from './jobClaims.js';
 /**
  * Email Sequence Scheduler
  * Manages automated email sequences - polls for due emails and sends them
@@ -7,18 +8,14 @@
  */
 
 import cron from 'node-cron';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { sendSequenceEmail } from './emailTracking.js';
 import { generatePersonalizedContent } from './emailPersonalization.js';
 
 const POLL_BATCH_SIZE = 50;
-const RETRY_DELAY_MINUTES = 5;
 
-// Initialize Supabase with service role for backend operations
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Initialize PostgreSQL with service role for backend operations
+const db = createDatabase();
 
 /**
  * EmailSequenceScheduler - Manages automated email sequences
@@ -74,7 +71,8 @@ class EmailSequenceScheduler {
             console.log(`📧 Processing ${dueEnrollments.length} due email(s)`);
 
             for (const enrollment of dueEnrollments) {
-                await this.processEnrollment(enrollment);
+                const key = `sequence:${enrollment.id}:${enrollment.current_step}:${enrollment.next_email_at}`;
+                await runClaimedJob(db, key, () => this.processEnrollment(enrollment));
             }
 
         } catch (error) {
@@ -90,7 +88,7 @@ class EmailSequenceScheduler {
     async getDueEnrollments() {
         const now = new Date();
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('email_sequence_enrollments')
             .select(`
                 *,
@@ -178,7 +176,7 @@ class EmailSequenceScheduler {
 
         // Get the next step
         const nextStepNumber = current_step + 1;
-        const { data: step, error: stepError } = await supabase
+        const { data: step, error: stepError } = await db
             .from('email_sequence_steps')
             .select('*')
             .eq('sequence_id', sequence.id)
@@ -197,14 +195,14 @@ class EmailSequenceScheduler {
             if (!personalizedData.firstName || Object.keys(personalizedData).length === 0) {
                 personalizedData = await generatePersonalizedContent(lead, sequence, user_id);
                 // Cache it
-                await supabase
+                await db
                     .from('email_sequence_enrollments')
                     .update({ personalized_data: personalizedData })
                     .eq('id', enrollmentId);
             }
 
             // Get user's brand settings
-            const { data: profile } = await supabase
+            const { data: profile } = await db
                 .from('profiles')
                 .select('email, full_name')
                 .eq('id', user_id)
@@ -215,7 +213,7 @@ class EmailSequenceScheduler {
             let senderName = null;
 
             if (sequence.campaign_id) {
-                const { data: campaign } = await supabase
+                const { data: campaign } = await db
                     .from('campaigns')
                     .select('sender_email, sender_name')
                     .eq('id', sequence.campaign_id)
@@ -256,13 +254,15 @@ class EmailSequenceScheduler {
                 console.log(`✉️ Sent step ${nextStepNumber} to ${lead.email} (enrollment ${enrollmentId})`);
             } else {
                 console.error(`Failed to send email to ${lead.email}:`, result.error);
-                // Schedule retry
-                await this.scheduleRetry(enrollmentId);
+                // Pause for review
+                await this.pauseForReview(enrollmentId);
+                throw new Error('Outbound delivery needs review before resuming');
             }
 
         } catch (error) {
             console.error(`Error processing enrollment ${enrollmentId}:`, error.message);
-            await this.scheduleRetry(enrollmentId);
+            await this.pauseForReview(enrollmentId);
+            throw error;
         }
     }
 
@@ -324,7 +324,7 @@ class EmailSequenceScheduler {
      */
     async advanceEnrollment(enrollmentId, sequence, currentStepNumber) {
         // Get next step to calculate delay
-        const { data: nextStep } = await supabase
+        const { data: nextStep } = await db
             .from('email_sequence_steps')
             .select('delay_days, delay_hours')
             .eq('sequence_id', sequence.id)
@@ -340,13 +340,13 @@ class EmailSequenceScheduler {
             nextEmailAt.setHours(nextEmailAt.getHours() + (nextStep.delay_hours || 0));
         }
 
-        await supabase
+        await db
             .from('email_sequence_enrollments')
             .update({
                 current_step: currentStepNumber,
                 last_email_at: new Date().toISOString(),
                 next_email_at: nextEmailAt?.toISOString() || null,
-                emails_sent: supabase.sql`emails_sent + 1`,
+                emails_sent: db.sql`emails_sent + 1`,
                 updated_at: new Date().toISOString(),
             })
             .eq('id', enrollmentId);
@@ -361,7 +361,7 @@ class EmailSequenceScheduler {
      * Complete an enrollment (all steps done)
      */
     async completeEnrollment(enrollmentId, sequenceId) {
-        await supabase
+        await db
             .from('email_sequence_enrollments')
             .update({
                 status: 'completed',
@@ -377,7 +377,7 @@ class EmailSequenceScheduler {
      * Stop an enrollment due to a condition (reply, click, bounce, unsubscribe)
      */
     async stopEnrollment(enrollmentId, status, reason) {
-        await supabase
+        await db
             .from('email_sequence_enrollments')
             .update({
                 status: `stopped_${status}`,
@@ -392,19 +392,15 @@ class EmailSequenceScheduler {
     }
 
     /**
-     * Schedule a retry after failure
+     * Pause after an uncertain or failed delivery
      */
-    async scheduleRetry(enrollmentId) {
-        const nextRetry = new Date();
-        nextRetry.setMinutes(nextRetry.getMinutes() + RETRY_DELAY_MINUTES);
-
-        await supabase
-            .from('email_sequence_enrollments')
-            .update({
-                next_email_at: nextRetry.toISOString(),
-                updated_at: new Date().toISOString(),
-            })
-            .eq('id', enrollmentId);
+    async pauseForReview(enrollmentId) {
+        const { error } = await db.from('email_sequence_enrollments').update({
+            status: 'paused', next_email_at: null,
+            stopped_reason: 'Delivery uncertain or failed. Check the provider before resuming.',
+            stopped_at: new Date().toISOString(),
+        }).eq('id', enrollmentId);
+        if (error) throw error;
     }
 
     /**
@@ -412,38 +408,38 @@ class EmailSequenceScheduler {
      */
     async incrementStats(sequenceId, stepNumber, leadId) {
         // Update sequence stats
-        await supabase.rpc('increment_sequence_stats', {
+        await db.rpc('increment_sequence_stats', {
             p_sequence_id: sequenceId,
             p_stat_name: 'total_sent',
             p_increment: 1
         }).catch(() => {
             // Fallback if RPC doesn't exist
-            supabase
+            db
                 .from('email_sequences')
-                .update({ total_sent: supabase.sql`total_sent + 1` })
+                .update({ total_sent: db.sql`total_sent + 1` })
                 .eq('id', sequenceId);
         });
 
         // Update step stats
-        await supabase.rpc('increment_step_stats', {
+        await db.rpc('increment_step_stats', {
             p_sequence_id: sequenceId,
             p_step_number: stepNumber,
             p_stat_name: 'emails_sent',
             p_increment: 1
         }).catch(() => {
             // Fallback if RPC doesn't exist
-            supabase
+            db
                 .from('email_sequence_steps')
-                .update({ emails_sent: supabase.sql`emails_sent + 1` })
+                .update({ emails_sent: db.sql`emails_sent + 1` })
                 .eq('sequence_id', sequenceId)
                 .eq('step_number', stepNumber);
         });
 
         // Update lead stats
-        await supabase
+        await db
             .from('leads')
             .update({
-                total_emails_sent: supabase.sql`COALESCE(total_emails_sent, 0) + 1`,
+                total_emails_sent: db.sql`COALESCE(total_emails_sent, 0) + 1`,
                 last_email_at: new Date().toISOString(),
                 email_status: 'contacted'
             })
@@ -454,7 +450,7 @@ class EmailSequenceScheduler {
      * Check if an email is unsubscribed
      */
     async isEmailUnsubscribed(userId, email) {
-        const { data } = await supabase
+        const { data } = await db
             .from('email_unsubscribes')
             .select('id')
             .eq('user_id', userId)
@@ -470,7 +466,7 @@ class EmailSequenceScheduler {
      */
     async handleStopCondition(enrollmentId, eventType) {
         // Get enrollment with sequence settings
-        const { data: enrollment } = await supabase
+        const { data: enrollment } = await db
             .from('email_sequence_enrollments')
             .select(`
                 *,

@@ -1,3 +1,4 @@
+import { requireOwnUser } from '../middleware/auth.js';
 /**
  * Stripe Routes
  * Handles payment webhooks and subscription management
@@ -11,12 +12,14 @@
  */
 
 import { Router } from 'express';
-import crypto from 'crypto';
-import { createClient } from '@supabase/supabase-js';
+import { verifyStripeEvent } from '../services/webhookVerification.js';
+import { requireAdmin } from '../middleware/adminAuth.js';
+import { createDatabase } from '../db/database.js';
 import { provisionPhoneNumbersForUser, releasePhoneNumbersForUser } from '../services/phoneProvisioning.js';
 import { sendPaymentConfirmationEmail } from '../services/email.js';
 
 const router = Router();
+router.param('userId', requireOwnUser);
 
 // Use test key if available and not in production, otherwise use live key
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
@@ -32,11 +35,8 @@ function getStripeKey(livemode) {
     return STRIPE_TEST_SECRET_KEY || STRIPE_SECRET_KEY;
 }
 
-// Initialize Supabase with service role for admin operations
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Initialize PostgreSQL with service role for admin operations
+const db = createDatabase();
 
 // Plan configurations - matches subscription_plans table
 const PLAN_CONFIG = {
@@ -57,35 +57,6 @@ const STRIPE_PRICE_TO_PLAN = {
     'price_1SnSJICnj3EJxpv0DNhpsLEi': 'pro',       // Pro $1337/month
     // Live mode prices (add your live price IDs here)
 };
-
-/**
- * Verify Stripe webhook signature
- */
-function verifyStripeSignature(payload, signature) {
-    if (!STRIPE_WEBHOOK_SECRET) {
-        console.warn('⚠️ STRIPE_WEBHOOK_SECRET not set - skipping signature verification');
-        return true;
-    }
-
-    const elements = signature.split(',');
-    const signatureObj = {};
-
-    for (const element of elements) {
-        const [key, value] = element.split('=');
-        signatureObj[key] = value;
-    }
-
-    const timestamp = signatureObj.t;
-    const expectedSignature = signatureObj.v1;
-
-    const signedPayload = `${timestamp}.${payload}`;
-    const computedSignature = crypto
-        .createHmac('sha256', STRIPE_WEBHOOK_SECRET)
-        .update(signedPayload)
-        .digest('hex');
-
-    return computedSignature === expectedSignature;
-}
 
 /**
  * Process successful checkout/payment
@@ -125,7 +96,7 @@ async function handleCheckoutCompleted(session) {
 
             // If not in our mapping, try database lookup
             if (!planId && priceId) {
-                const { data: plan } = await supabase
+                const { data: plan } = await db
                     .from('subscription_plans')
                     .select('id')
                     .or(`stripe_price_id_monthly.eq.${priceId},stripe_price_id_yearly.eq.${priceId}`)
@@ -148,7 +119,7 @@ async function handleCheckoutCompleted(session) {
     }
 
     // 1. Create or update user subscription
-    const { data: subscription, error: subError } = await supabase
+    const { data: subscription, error: subError } = await db
         .from('user_subscriptions')
         .upsert({
             user_id: userId,
@@ -179,7 +150,7 @@ async function handleCheckoutCompleted(session) {
     console.log(`  ✓ Subscription created/updated: ${subscription.id}`);
 
     // 2. Update user's plan in profiles
-    await supabase
+    await db
         .from('profiles')
         .update({ plan: planId })
         .eq('id', userId);
@@ -206,14 +177,14 @@ async function handleCheckoutCompleted(session) {
 
     try {
         const provisionResult = await provisionPhoneNumbersForUser(
-            supabase,
+            db,
             userId,
             planConfig.phoneNumbers,
             'IE'  // Default to Ireland, could be made configurable
         );
 
         // Update subscription with provisioning result
-        await supabase
+        await db
             .from('user_subscriptions')
             .update({
                 metadata: {
@@ -233,7 +204,7 @@ async function handleCheckoutCompleted(session) {
     } catch (provisionError) {
         console.error('  ❌ Phone provisioning failed:', provisionError);
         // Don't throw - subscription is still valid, just needs manual intervention
-        await supabase
+        await db
             .from('user_subscriptions')
             .update({
                 metadata: {
@@ -256,7 +227,7 @@ async function handleSubscriptionUpdated(subscription) {
     const customerId = subscription.customer;
 
     // Find user by Stripe customer ID
-    const { data: userSub } = await supabase
+    const { data: userSub } = await db
         .from('user_subscriptions')
         .select('*, profiles!inner(id)')
         .eq('stripe_customer_id', customerId)
@@ -271,7 +242,7 @@ async function handleSubscriptionUpdated(subscription) {
 
     // Determine plan from price
     const priceId = subscription.items?.data?.[0]?.price?.id;
-    const { data: plan } = await supabase
+    const { data: plan } = await db
         .from('subscription_plans')
         .select('*')
         .or(`stripe_price_id_monthly.eq.${priceId},stripe_price_id_yearly.eq.${priceId}`)
@@ -288,16 +259,16 @@ async function handleSubscriptionUpdated(subscription) {
             // Upgrade: provision more numbers
             const additionalNumbers = newPlan.phoneNumbers - oldPlan.phoneNumbers;
             console.log(`  📞 Provisioning ${additionalNumbers} additional phone numbers...`);
-            await provisionPhoneNumbersForUser(supabase, userId, additionalNumbers, 'IE');
+            await provisionPhoneNumbersForUser(db, userId, additionalNumbers, 'IE');
         } else if (newPlan.phoneNumbers < oldPlan.phoneNumbers) {
             // Downgrade: release excess numbers
             const excessNumbers = oldPlan.phoneNumbers - newPlan.phoneNumbers;
             console.log(`  📞 Releasing ${excessNumbers} excess phone numbers...`);
-            await releasePhoneNumbersForUser(supabase, userId, excessNumbers);
+            await releasePhoneNumbersForUser(db, userId, excessNumbers);
         }
 
         // Update subscription
-        await supabase
+        await db
             .from('user_subscriptions')
             .update({
                 plan_id: plan.id,
@@ -308,7 +279,7 @@ async function handleSubscriptionUpdated(subscription) {
             .eq('user_id', userId);
 
         // Update profile
-        await supabase
+        await db
             .from('profiles')
             .update({ plan: plan.id })
             .eq('id', userId);
@@ -323,7 +294,7 @@ async function handleSubscriptionDeleted(subscription) {
 
     const customerId = subscription.customer;
 
-    const { data: userSub } = await supabase
+    const { data: userSub } = await db
         .from('user_subscriptions')
         .select('*')
         .eq('stripe_customer_id', customerId)
@@ -338,10 +309,10 @@ async function handleSubscriptionDeleted(subscription) {
 
     // Release all phone numbers
     console.log('  📞 Releasing all phone numbers...');
-    await releasePhoneNumbersForUser(supabase, userId);
+    await releasePhoneNumbersForUser(db, userId);
 
     // Update subscription status
-    await supabase
+    await db
         .from('user_subscriptions')
         .update({
             status: 'canceled',
@@ -350,7 +321,7 @@ async function handleSubscriptionDeleted(subscription) {
         .eq('user_id', userId);
 
     // Downgrade profile to free
-    await supabase
+    await db
         .from('profiles')
         .update({ plan: 'free' })
         .eq('id', userId);
@@ -373,39 +344,12 @@ router.post('/webhook', async (req, res) => {
     let event;
 
     try {
-        // Parse the event from raw body
-        // When using express.raw(), req.body is a Buffer
-        const rawBody = req.body;
-        let rawBodyString;
-
-        if (Buffer.isBuffer(rawBody)) {
-            rawBodyString = rawBody.toString('utf8');
-        } else if (typeof rawBody === 'string') {
-            rawBodyString = rawBody;
-        } else {
-            // Fallback: already parsed JSON (shouldn't happen with express.raw())
-            rawBodyString = JSON.stringify(rawBody);
+        if (!STRIPE_WEBHOOK_SECRET) return res.status(503).json({ error: 'Stripe webhook secret is not configured' });
+        try {
+            event = verifyStripeEvent(req.body, signature, STRIPE_WEBHOOK_SECRET);
+        } catch {
+            return res.status(401).json({ error: 'Invalid webhook signature or payload' });
         }
-
-        // Verify webhook signature in production
-        if (STRIPE_WEBHOOK_SECRET) {
-            if (!signature) {
-                console.error('❌ Missing stripe-signature header');
-                return res.status(401).json({ error: 'Missing signature' });
-            }
-
-            const isValid = verifyStripeSignature(rawBodyString, signature);
-            if (!isValid) {
-                console.error('❌ Invalid webhook signature');
-                return res.status(401).json({ error: 'Invalid signature' });
-            }
-            console.log('  ✓ Webhook signature verified');
-        } else {
-            console.warn('⚠️ STRIPE_WEBHOOK_SECRET not set - skipping signature verification (UNSAFE in production)');
-        }
-
-        // Parse the event from the raw body string
-        event = JSON.parse(rawBodyString);
 
         console.log(`  Event type: ${event.type}`);
 
@@ -447,7 +391,7 @@ router.post('/webhook', async (req, res) => {
  */
 router.get('/plans', async (req, res) => {
     try {
-        const { data: plans, error } = await supabase
+        const { data: plans, error } = await db
             .from('subscription_plans')
             .select('*')
             .eq('is_active', true)
@@ -469,7 +413,7 @@ router.get('/subscription/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
 
-        const { data: subscription, error } = await supabase
+        const { data: subscription, error } = await db
             .from('user_subscriptions')
             .select(`
                 *,
@@ -496,7 +440,7 @@ router.get('/payment-link/:planId/:userId', async (req, res) => {
         const { planId, userId } = req.params;
 
         // Get plan with payment link
-        const { data: plan, error } = await supabase
+        const { data: plan, error } = await db
             .from('subscription_plans')
             .select('stripe_payment_link')
             .eq('id', planId)
@@ -520,7 +464,7 @@ router.get('/payment-link/:planId/:userId', async (req, res) => {
 /**
  * Manual provisioning trigger (for admin/debugging)
  */
-router.post('/provision/:userId', async (req, res) => {
+router.post('/provision/:userId', requireAdmin, async (req, res) => {
     try {
         const { userId } = req.params;
         const { planId = 'basic', countryCode = 'IE' } = req.body;
@@ -531,7 +475,7 @@ router.post('/provision/:userId', async (req, res) => {
         }
 
         const result = await provisionPhoneNumbersForUser(
-            supabase,
+            db,
             userId,
             planConfig.phoneNumbers,
             countryCode
@@ -550,21 +494,9 @@ router.post('/provision/:userId', async (req, res) => {
  */
 router.post('/portal', async (req, res) => {
     try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader?.startsWith('Bearer ')) {
-            return res.status(401).json({ error: 'Unauthorized' });
-        }
+        const user = req.user;
 
-        const token = authHeader.split(' ')[1];
-
-        // Get user from token
-        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-        if (authError || !user) {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
-
-        // Get user's Stripe customer ID from subscription
-        const { data: subscription, error: subError } = await supabase
+        const { data: subscription, error: subError } = await db
             .from('user_subscriptions')
             .select('stripe_customer_id')
             .eq('user_id', user.id)

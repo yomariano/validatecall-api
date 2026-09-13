@@ -141,7 +141,7 @@ export async function deleteFromVapi(phoneNumberId) {
  * Provision multiple phone numbers for a user
  * This is the main function called after payment
  */
-export async function provisionPhoneNumbersForUser(supabase, userId, count, countryCode = 'IE') {
+export async function provisionPhoneNumbersForUser(database, userId, count, countryCode = 'IE') {
     console.log(`📞 Provisioning ${count} phone numbers for user ${userId} in ${countryCode}`);
 
     const results = {
@@ -172,7 +172,7 @@ export async function provisionPhoneNumbersForUser(supabase, userId, count, coun
             console.log(`    ✓ Imported to VAPI: ${vapiResult.id}`);
 
             // 3. Store in database
-            const { data, error } = await supabase
+            const { data, error } = await database
                 .from('user_phone_numbers')
                 .insert({
                     user_id: userId,
@@ -221,11 +221,11 @@ export async function provisionPhoneNumbersForUser(supabase, userId, count, coun
 /**
  * Release all phone numbers for a user (on subscription cancel/downgrade)
  */
-export async function releasePhoneNumbersForUser(supabase, userId, count = null) {
+export async function releasePhoneNumbersForUser(database, userId, count = null) {
     console.log(`📞 Releasing ${count || 'all'} phone numbers for user ${userId}`);
 
     // Get user's phone numbers
-    let query = supabase
+    let query = database
         .from('user_phone_numbers')
         .select('*')
         .eq('user_id', userId)
@@ -258,7 +258,7 @@ export async function releasePhoneNumbersForUser(supabase, userId, count = null)
             }
 
             // 3. Update database (mark as released instead of delete for audit trail)
-            await supabase
+            await database
                 .from('user_phone_numbers')
                 .update({ status: 'released', updated_at: new Date().toISOString() })
                 .eq('id', phoneNumber.id);

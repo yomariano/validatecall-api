@@ -1,3 +1,4 @@
+import { requireOwnUser } from '../middleware/auth.js';
 /**
  * Free Tier Usage Routes
  * Tracks and enforces usage limits for free tier users
@@ -9,25 +10,14 @@
  */
 
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { sendUsageAlertEmail } from '../services/email.js';
 
 const router = Router();
+router.param('userId', requireOwnUser);
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-// Initialize Supabase with service role for admin operations (if configured)
-const supabase = supabaseUrl && supabaseServiceRoleKey
-    ? createClient(supabaseUrl, supabaseServiceRoleKey)
-    : null;
-
-function ensureSupabaseConfigured({ res }) {
-    if (supabase) return true;
-    console.error('💥 Supabase not configured: missing SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY');
-    res.status(500).json({ error: 'Supabase not configured' });
-    return false;
-}
+const db = createDatabase();
+function ensureDatabaseConfigured() { return true; }
 
 /**
  * Check if user is at 80% usage and send alert email (only once)
@@ -40,7 +30,7 @@ async function checkAndSendUsageAlert(userId, resourceType, used, limit) {
 
     // Check if alert was already sent
     const alertType = `usage_alert_${resourceType}_80`;
-    const { data: existingAlert } = await supabase
+    const { data: existingAlert } = await db
         .from('email_logs')
         .select('id')
         .eq('user_id', userId)
@@ -53,7 +43,7 @@ async function checkAndSendUsageAlert(userId, resourceType, used, limit) {
     }
 
     // Get user profile for email
-    const { data: profile } = await supabase
+    const { data: profile } = await db
         .from('profiles')
         .select('email, full_name')
         .eq('id', userId)
@@ -76,7 +66,7 @@ async function checkAndSendUsageAlert(userId, resourceType, used, limit) {
 
         if (result.success) {
             // Log the alert to prevent duplicates
-            await supabase.from('email_logs').insert({
+            await db.from('email_logs').insert({
                 user_id: userId,
                 email_type: alertType,
                 recipient: profile.email,
@@ -97,7 +87,7 @@ async function checkAndSendUsageAlert(userId, resourceType, used, limit) {
  */
 router.get('/:userId', async (req, res) => {
     try {
-        if (!ensureSupabaseConfigured({ res })) return;
+        if (!ensureDatabaseConfigured({ res })) return;
 
         const { userId } = req.params;
 
@@ -108,7 +98,7 @@ router.get('/:userId', async (req, res) => {
         // First check if user has an active subscription
         let subscription, subscriptionError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('user_subscriptions')
                 .select('status, plan_id')
                 .eq('user_id', userId)
@@ -142,12 +132,12 @@ router.get('/:userId', async (req, res) => {
             const planLimits = PLAN_LIMITS[subscription.plan_id] || PLAN_LIMITS.lite;
 
             // Get actual usage counts from database
-            const { count: leadsCount } = await supabase
+            const { count: leadsCount } = await db
                 .from('leads')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId);
 
-            const { count: callsCount } = await supabase
+            const { count: callsCount } = await db
                 .from('calls')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId);
@@ -176,7 +166,7 @@ router.get('/:userId', async (req, res) => {
         // Get free tier usage
         let usage, usageError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('free_tier_usage')
                 .select('*')
                 .eq('user_id', userId)
@@ -198,7 +188,7 @@ router.get('/:userId', async (req, res) => {
         if (!usage) {
             let newUsage, createError;
             try {
-                const result = await supabase
+                const result = await db
                     .from('free_tier_usage')
                     .insert({ user_id: userId })
                     .select()
@@ -245,7 +235,7 @@ router.get('/:userId', async (req, res) => {
  */
 router.get('/:userId/can-generate-leads', async (req, res) => {
     try {
-        if (!ensureSupabaseConfigured({ res })) return;
+        if (!ensureDatabaseConfigured({ res })) return;
 
         const { userId } = req.params;
         const count = parseInt(req.query.count) || 1;
@@ -253,7 +243,7 @@ router.get('/:userId/can-generate-leads', async (req, res) => {
         // Check for active subscription
         let subscription, subscriptionError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('user_subscriptions')
                 .select('status')
                 .eq('user_id', userId)
@@ -283,7 +273,7 @@ router.get('/:userId/can-generate-leads', async (req, res) => {
         // Get free tier usage
         let usage, usageError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('free_tier_usage')
                 .select('leads_used, leads_limit')
                 .eq('user_id', userId)
@@ -334,14 +324,14 @@ router.get('/:userId/can-generate-leads', async (req, res) => {
  */
 router.get('/:userId/can-make-call', async (req, res) => {
     try {
-        if (!ensureSupabaseConfigured({ res })) return;
+        if (!ensureDatabaseConfigured({ res })) return;
 
         const { userId } = req.params;
 
         // Check for active subscription
         let subscription, subscriptionError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('user_subscriptions')
                 .select('status')
                 .eq('user_id', userId)
@@ -372,7 +362,7 @@ router.get('/:userId/can-make-call', async (req, res) => {
         // Get free tier usage
         let usage, usageError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('free_tier_usage')
                 .select('calls_used, calls_limit, call_seconds_per_call')
                 .eq('user_id', userId)
@@ -423,7 +413,7 @@ router.get('/:userId/can-make-call', async (req, res) => {
  */
 router.post('/:userId/increment-leads', async (req, res) => {
     try {
-        if (!ensureSupabaseConfigured({ res })) return;
+        if (!ensureDatabaseConfigured({ res })) return;
 
         const { userId } = req.params;
         const count = parseInt(req.body.count) || 1;
@@ -431,7 +421,7 @@ router.post('/:userId/increment-leads', async (req, res) => {
         // Check for active subscription (don't track for paid users)
         let subscription, subscriptionError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('user_subscriptions')
                 .select('status')
                 .eq('user_id', userId)
@@ -461,7 +451,7 @@ router.post('/:userId/increment-leads', async (req, res) => {
         // Increment usage
         let currentUsage, currentUsageError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('free_tier_usage')
                 .select('leads_used, leads_limit')
                 .eq('user_id', userId)
@@ -483,7 +473,7 @@ router.post('/:userId/increment-leads', async (req, res) => {
             // Create record with initial count
             let createError;
             try {
-                const result = await supabase
+                const result = await db
                     .from('free_tier_usage')
                     .insert({ user_id: userId, leads_used: count });
                 createError = result.error;
@@ -504,7 +494,7 @@ router.post('/:userId/increment-leads', async (req, res) => {
 
         const newCount = currentUsage.leads_used + count;
 
-        const { error: updateError } = await supabase
+        const { error: updateError } = await db
             .from('free_tier_usage')
             .update({ leads_used: newCount })
             .eq('user_id', userId);
@@ -533,14 +523,14 @@ router.post('/:userId/increment-leads', async (req, res) => {
  */
 router.post('/:userId/increment-calls', async (req, res) => {
     try {
-        if (!ensureSupabaseConfigured({ res })) return;
+        if (!ensureDatabaseConfigured({ res })) return;
 
         const { userId } = req.params;
 
         // Check for active subscription
         let subscription, subscriptionError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('user_subscriptions')
                 .select('status')
                 .eq('user_id', userId)
@@ -570,7 +560,7 @@ router.post('/:userId/increment-calls', async (req, res) => {
         // Increment usage
         let currentUsage, currentUsageError;
         try {
-            const result = await supabase
+            const result = await db
                 .from('free_tier_usage')
                 .select('calls_used, calls_limit')
                 .eq('user_id', userId)
@@ -592,7 +582,7 @@ router.post('/:userId/increment-calls', async (req, res) => {
             // Create record with initial count
             let createError;
             try {
-                const result = await supabase
+                const result = await db
                     .from('free_tier_usage')
                     .insert({ user_id: userId, calls_used: 1 });
                 createError = result.error;
@@ -613,7 +603,7 @@ router.post('/:userId/increment-calls', async (req, res) => {
 
         const newCount = currentUsage.calls_used + 1;
 
-        const { error: updateError } = await supabase
+        const { error: updateError } = await db
             .from('free_tier_usage')
             .update({ calls_used: newCount })
             .eq('user_id', userId);

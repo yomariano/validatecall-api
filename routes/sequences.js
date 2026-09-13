@@ -1,24 +1,26 @@
+import { ownResource, ownReferences } from '../middleware/ownership.js';
 /**
  * Email Sequences Routes
  * API endpoints for managing email sequences
  */
 
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { batchPersonalizeLeads } from '../services/emailPersonalization.js';
 
 const router = Router();
 
-// Initialize Supabase client with service role for backend operations
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Initialize PostgreSQL client with service role for backend operations
+const db = createDatabase();
 
 /**
  * GET /api/sequences
  * List user's sequences
  */
+router.use(ownReferences(db));
+router.param('id', ownResource(db, 'email_sequences'));
+router.param('enrollmentId', ownResource(db, 'email_sequence_enrollments'));
+
 router.get('/', async (req, res) => {
     try {
         const userId = req.headers['x-user-id'];
@@ -26,7 +28,7 @@ router.get('/', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('email_sequences')
             .select(`
                 *,
@@ -77,7 +79,7 @@ router.post('/', async (req, res) => {
         }
 
         // Create sequence
-        const { data: sequence, error: seqError } = await supabase
+        const { data: sequence, error: seqError } = await db
             .from('email_sequences')
             .insert({
                 user_id: userId,
@@ -113,7 +115,7 @@ router.post('/', async (req, res) => {
                 cta_url: step.ctaUrl || null,
             }));
 
-            const { error: stepsError } = await supabase
+            const { error: stepsError } = await db
                 .from('email_sequence_steps')
                 .insert(stepsData);
 
@@ -143,7 +145,7 @@ router.get('/:id', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { data: sequence, error } = await supabase
+        const { data: sequence, error } = await db
             .from('email_sequences')
             .select(`
                 *,
@@ -165,7 +167,7 @@ router.get('/:id', async (req, res) => {
         }
 
         // Get enrollment counts by status
-        const { data: enrollmentStats } = await supabase
+        const { data: enrollmentStats } = await db
             .from('email_sequence_enrollments')
             .select('status')
             .eq('sequence_id', id);
@@ -231,7 +233,7 @@ router.patch('/:id', async (req, res) => {
         if (stopOnClick !== undefined) updates.stop_on_click = stopOnClick;
         if (stopOnBounce !== undefined) updates.stop_on_bounce = stopOnBounce;
 
-        const { data: sequence, error } = await supabase
+        const { data: sequence, error } = await db
             .from('email_sequences')
             .update(updates)
             .eq('id', id)
@@ -247,7 +249,7 @@ router.patch('/:id', async (req, res) => {
         // Update steps if provided
         if (steps && Array.isArray(steps)) {
             // Delete existing steps
-            await supabase
+            await db
                 .from('email_sequence_steps')
                 .delete()
                 .eq('sequence_id', id);
@@ -264,7 +266,7 @@ router.patch('/:id', async (req, res) => {
                 cta_url: step.ctaUrl || null,
             }));
 
-            await supabase
+            await db
                 .from('email_sequence_steps')
                 .insert(stepsData);
         }
@@ -289,7 +291,7 @@ router.delete('/:id', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { error } = await supabase
+        const { error } = await db
             .from('email_sequences')
             .delete()
             .eq('id', id)
@@ -322,7 +324,7 @@ router.post('/:id/activate', async (req, res) => {
         }
 
         // Get sequence with campaign
-        const { data: sequence, error: seqError } = await supabase
+        const { data: sequence, error: seqError } = await db
             .from('email_sequences')
             .select(`
                 *,
@@ -359,7 +361,7 @@ router.post('/:id/activate', async (req, res) => {
         const initialDelayMs = ((firstStep.delay_days || 0) * 24 * 60 + (firstStep.delay_hours || 0)) * 60 * 1000;
 
         // Check for existing enrollments to avoid duplicates
-        const { data: existingEnrollments } = await supabase
+        const { data: existingEnrollments } = await db
             .from('email_sequence_enrollments')
             .select('lead_id')
             .eq('sequence_id', id)
@@ -369,12 +371,12 @@ router.post('/:id/activate', async (req, res) => {
         const newLeadIds = leadsToEnroll.filter(id => !existingLeadIds.has(id));
 
         // Get unsubscribed emails
-        const { data: leads } = await supabase
+        const { data: leads } = await db
             .from('leads')
             .select('id, email')
             .in('id', newLeadIds);
 
-        const { data: unsubscribes } = await supabase
+        const { data: unsubscribes } = await db
             .from('email_unsubscribes')
             .select('email')
             .eq('user_id', userId);
@@ -399,7 +401,7 @@ router.post('/:id/activate', async (req, res) => {
             next_email_at: firstEmailAt.toISOString(),
         }));
 
-        const { error: enrollError } = await supabase
+        const { error: enrollError } = await db
             .from('email_sequence_enrollments')
             .insert(enrollments);
 
@@ -409,7 +411,7 @@ router.post('/:id/activate', async (req, res) => {
         }
 
         // Update sequence status and stats
-        await supabase
+        await db
             .from('email_sequences')
             .update({
                 status: 'active',
@@ -449,7 +451,7 @@ router.post('/:id/pause', async (req, res) => {
         }
 
         // Update sequence status
-        await supabase
+        await db
             .from('email_sequences')
             .update({
                 status: 'paused',
@@ -459,7 +461,7 @@ router.post('/:id/pause', async (req, res) => {
             .eq('user_id', userId);
 
         // Pause all active enrollments
-        await supabase
+        await db
             .from('email_sequence_enrollments')
             .update({
                 status: 'paused',
@@ -489,7 +491,7 @@ router.post('/:id/resume', async (req, res) => {
         }
 
         // Update sequence status
-        await supabase
+        await db
             .from('email_sequences')
             .update({
                 status: 'active',
@@ -499,7 +501,7 @@ router.post('/:id/resume', async (req, res) => {
             .eq('user_id', userId);
 
         // Resume paused enrollments - set next_email_at to now
-        await supabase
+        await db
             .from('email_sequence_enrollments')
             .update({
                 status: 'active',
@@ -530,7 +532,7 @@ router.get('/:id/analytics', async (req, res) => {
         }
 
         // Get sequence with steps
-        const { data: sequence, error: seqError } = await supabase
+        const { data: sequence, error: seqError } = await db
             .from('email_sequences')
             .select(`
                 *,
@@ -545,7 +547,7 @@ router.get('/:id/analytics', async (req, res) => {
         }
 
         // Get enrollment breakdown
-        const { data: enrollments } = await supabase
+        const { data: enrollments } = await db
             .from('email_sequence_enrollments')
             .select('status, current_step, emails_sent, opens, clicks')
             .eq('sequence_id', id);
@@ -584,7 +586,7 @@ router.get('/:id/analytics', async (req, res) => {
         });
 
         // Get recent activity
-        const { data: recentEvents } = await supabase
+        const { data: recentEvents } = await db
             .from('email_tracking_events')
             .select(`
                 *,
@@ -631,7 +633,7 @@ router.get('/:id/enrollments', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        let query = supabase
+        let query = db
             .from('email_sequence_enrollments')
             .select(`
                 *,
@@ -679,7 +681,7 @@ router.post('/:id/enrollments/:enrollmentId/stop', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { error } = await supabase
+        const { error } = await db
             .from('email_sequence_enrollments')
             .update({
                 status: 'paused',
@@ -716,7 +718,7 @@ router.post('/:id/enrollments/:enrollmentId/resume', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { error } = await supabase
+        const { error } = await db
             .from('email_sequence_enrollments')
             .update({
                 status: 'active',

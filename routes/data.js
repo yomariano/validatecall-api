@@ -1,5 +1,6 @@
+import { ownResource, ownReferences } from '../middleware/ownership.js';
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 
 const router = Router();
 
@@ -29,99 +30,11 @@ const withRetry = async (operation, maxRetries = 3, baseDelay = 1000) => {
     throw lastError;
 };
 
-// Supabase client options with timeout
-const supabaseOptions = {
-    auth: { persistSession: false },
-    global: {
-        fetch: (url, options = {}) => {
-            return fetch(url, {
-                ...options,
-                signal: AbortSignal.timeout(30000), // 30 second timeout
-            });
-        },
-    },
-};
-
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-// Check if we're in development mode
-const IS_DEV = process.env.NODE_ENV !== 'production';
-
-// Mock user ID for localhost development (matches frontend AuthContext)
-const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
-
-// Admin client (bypasses RLS) - for dev mode and admin operations
-const supabaseAdmin = supabaseUrl && supabaseServiceKey
-    ? createClient(supabaseUrl, supabaseServiceKey, supabaseOptions)
-    : null;
-
-// Create a user-authenticated Supabase client from the request
-// Uses the user's JWT to enforce RLS policies
-const getSupabaseClient = (req) => {
-    if (!supabaseUrl) {
-        return null;
-    }
-
-    // Extract JWT from Authorization header (Bearer token)
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-
-    // If no token and in dev mode, use admin client (bypasses RLS)
-    if (!token && IS_DEV && supabaseAdmin) {
-        return supabaseAdmin;
-    }
-
-    if (!token || !supabaseAnonKey) {
-        // No token - use anon client if available
-        return supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey, supabaseOptions) : null;
-    }
-
-    // Create client with user's JWT and timeout
-    return createClient(supabaseUrl, supabaseAnonKey, {
-        ...supabaseOptions,
-        global: {
-            ...supabaseOptions.global,
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        },
-    });
-};
-
-// Get the authenticated user's ID from the token
-const getUserId = async (req) => {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-
-    // In dev mode without token, return mock user ID
-    if (!token && IS_DEV) {
-        return MOCK_USER_ID;
-    }
-
-    if (!token || !supabaseAnonKey || !supabaseUrl) {
-        return null;
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-        ...supabaseOptions,
-        global: {
-            ...supabaseOptions.global,
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        },
-    });
-
-    const { data: { user } } = await supabase.auth.getUser();
-    return user?.id || null;
-};
-
-// Check if Supabase is configured
-router.get('/status', (req, res) => {
-    res.json({ configured: !!supabaseAdmin || !!supabaseAnonKey });
-});
+const serverDatabase = createDatabase();
+const getUserDatabase = (req) => serverDatabase.forUser(req.user.id);
+const getUserId = async (req) => req.user?.id || null;
+router.use(ownReferences(serverDatabase));
+router.get('/status', (req, res) => res.json({ configured: Boolean(process.env.DATABASE_URL) }));
 
 // =============================================
 // LEADS
@@ -130,14 +43,14 @@ router.get('/status', (req, res) => {
 // Get leads with optional filters
 router.get('/leads', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const { status, hasPhone, keyword, limit } = req.query;
 
-        let query = supabase
+        let query = db
             .from('leads')
             .select('*')
             .order('created_at', { ascending: false });
@@ -161,8 +74,8 @@ router.get('/leads', async (req, res) => {
         const { data, error } = await query;
 
         if (error) {
-            console.error('Supabase leads error:', JSON.stringify(error, null, 2));
-            return res.status(500).json({ error: error.message || error.code || 'Unknown Supabase error', details: error });
+            console.error('Database leads error:', JSON.stringify(error, null, 2));
+            return res.status(500).json({ error: error.message || error.code || 'Unknown Database error', details: error });
         }
 
         console.log(`[Leads] GET: returning ${data?.length || 0} leads`);
@@ -176,12 +89,12 @@ router.get('/leads', async (req, res) => {
 // Get single lead by ID
 router.get('/leads/:id', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('leads')
             .select('*')
             .eq('id', req.params.id)
@@ -201,14 +114,14 @@ router.get('/leads/:id', async (req, res) => {
 // Save leads (batch) - with retry and batch processing
 router.post('/leads', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const userId = await getUserId(req);
         // Only require auth in production
-        if (!userId && !IS_DEV) {
+        if (!userId) {
             return res.status(401).json({ error: 'Authentication required' });
         }
 
@@ -230,6 +143,10 @@ router.post('/leads', async (req, res) => {
                 rating: lead.rating,
                 review_count: lead.reviewCount,
                 category: lead.category,
+                source_url: lead.sourceUrl || lead.source_url || null,
+                source_excerpt: lead.sourceExcerpt || lead.source_excerpt || null,
+                retrieved_at: lead.retrievedAt || lead.retrieved_at || null,
+                verification_status: lead.sourceUrl ? 'source_observed' : 'imported',
                 place_id: lead.placeId,
                 google_maps_url: lead.googleMapsUrl || lead.url,
                 latitude: lead.location?.lat,
@@ -255,7 +172,7 @@ router.post('/leads', async (req, res) => {
                 const batch = leadsData.slice(i, i + BATCH_SIZE);
                 try {
                     const { data, error } = await withRetry(() =>
-                        supabase
+                        db
                             .from('leads')
                             .upsert(batch, {
                                 onConflict: 'user_id,place_id',
@@ -288,7 +205,7 @@ router.post('/leads', async (req, res) => {
             if (placeIds.length > 0) {
                 try {
                     const { data: existing } = await withRetry(() =>
-                        supabase
+                        db
                             .from('leads')
                             .select('place_id')
                             .in('place_id', placeIds)
@@ -310,7 +227,7 @@ router.post('/leads', async (req, res) => {
                 const batch = newLeads.slice(i, i + BATCH_SIZE);
                 try {
                     const { data, error } = await withRetry(() =>
-                        supabase
+                        db
                             .from('leads')
                             .insert(batch)
                             .select('id')
@@ -342,9 +259,9 @@ router.post('/leads', async (req, res) => {
 // Batch update lead industries
 router.patch('/leads/industries', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const { updates } = req.body; // Array of { id, industry }
@@ -356,7 +273,7 @@ router.patch('/leads/industries', async (req, res) => {
         // Update each lead's category with the classified industry
         let updated = 0;
         for (const update of updates) {
-            const { error } = await supabase
+            const { error } = await db
                 .from('leads')
                 .update({ category: update.industry })
                 .eq('id', update.id);
@@ -375,9 +292,9 @@ router.patch('/leads/industries', async (req, res) => {
 // Update a lead (general update)
 router.patch('/leads/:id', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const { name, phone, email, category, address, website, status, city } = req.body;
@@ -397,7 +314,7 @@ router.patch('/leads/:id', async (req, res) => {
             return res.status(400).json({ error: 'No fields to update' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('leads')
             .update(updates)
             .eq('id', req.params.id)
@@ -417,14 +334,14 @@ router.patch('/leads/:id', async (req, res) => {
 
 router.patch('/leads/:id/status', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const { status } = req.body;
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('leads')
             .update({ status })
             .eq('id', req.params.id)
@@ -445,19 +362,19 @@ router.patch('/leads/:id/status', async (req, res) => {
 // Update lead after call
 router.patch('/leads/:id/after-call', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         // First get current call count
-        const { data: currentLead } = await supabase
+        const { data: currentLead } = await db
             .from('leads')
             .select('call_count')
             .eq('id', req.params.id)
             .single();
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('leads')
             .update({
                 status: 'contacted',
@@ -482,12 +399,12 @@ router.patch('/leads/:id/after-call', async (req, res) => {
 // Get leads stats
 router.get('/stats/leads', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
+        const db = getUserDatabase(req);
+        if (!db) {
             return res.json({ total: 0, new: 0, contacted: 0, interested: 0 });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('leads')
             .select('status, search_keyword');
 
@@ -524,12 +441,12 @@ router.get('/stats/leads', async (req, res) => {
 // Get campaigns
 router.get('/campaigns', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
+        const db = getUserDatabase(req);
+        if (!db) {
             return res.json([]);
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('campaigns')
             .select('*')
             .order('created_at', { ascending: false });
@@ -548,9 +465,9 @@ router.get('/campaigns', async (req, res) => {
 // Create campaign
 router.post('/campaigns', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const userId = await getUserId(req);
@@ -563,7 +480,7 @@ router.post('/campaigns', async (req, res) => {
             senderName, senderEmail, emailSubject, emailBody, ctaText, ctaUrl
         } = req.body;
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('campaigns')
             .insert({
                 user_id: userId,
@@ -597,12 +514,12 @@ router.post('/campaigns', async (req, res) => {
 // Update campaign stats
 router.patch('/campaigns/:id', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('campaigns')
             .update(req.body)
             .eq('id', req.params.id)
@@ -627,14 +544,14 @@ router.patch('/campaigns/:id', async (req, res) => {
 // Get calls
 router.get('/calls', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
+        const db = getUserDatabase(req);
+        if (!db) {
             return res.json([]);
         }
 
         const { campaignId, limit } = req.query;
 
-        let query = supabase
+        let query = db
             .from('calls')
             .select(`
         *,
@@ -667,9 +584,9 @@ router.get('/calls', async (req, res) => {
 // Save call
 router.post('/calls', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const userId = await getUserId(req);
@@ -679,7 +596,7 @@ router.post('/calls', async (req, res) => {
 
         const { leadId, campaignId, vapiCallId, phoneNumber, customerName, status } = req.body;
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('calls')
             .insert({
                 user_id: userId,
@@ -707,12 +624,12 @@ router.post('/calls', async (req, res) => {
 // Update call
 router.patch('/calls/:id', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('calls')
             .update(req.body)
             .eq('id', req.params.id)
@@ -733,12 +650,12 @@ router.patch('/calls/:id', async (req, res) => {
 // Get calls stats
 router.get('/stats/calls', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
+        const db = getUserDatabase(req);
+        if (!db) {
             return res.json({ total: 0, completed: 0, failed: 0, avgDuration: 0 });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('calls')
             .select('status, duration_seconds');
 
@@ -769,14 +686,14 @@ router.get('/stats/calls', async (req, res) => {
 // Get scrape jobs
 router.get('/scrape-jobs', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
+        const db = getUserDatabase(req);
+        if (!db) {
             return res.json([]);
         }
 
         const limit = req.query.limit || 20;
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scrape_jobs')
             .select('*')
             .order('created_at', { ascending: false })
@@ -796,9 +713,9 @@ router.get('/scrape-jobs', async (req, res) => {
 // Save scrape job
 router.post('/scrape-jobs', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const userId = await getUserId(req);
@@ -808,7 +725,7 @@ router.post('/scrape-jobs', async (req, res) => {
 
         const { runId, keyword, location, maxResults } = req.body;
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scrape_jobs')
             .insert({
                 user_id: userId,
@@ -835,12 +752,12 @@ router.post('/scrape-jobs', async (req, res) => {
 // Update scrape job
 router.patch('/scrape-jobs/:id', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scrape_jobs')
             .update(req.body)
             .eq('id', req.params.id)
@@ -865,8 +782,8 @@ router.patch('/scrape-jobs/:id', async (req, res) => {
 // Get dashboard stats
 router.get('/dashboard', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
+        const db = getUserDatabase(req);
+        if (!db) {
             return res.json({
                 leads: { total: 0, new: 0, contacted: 0, interested: 0 },
                 calls: { total: 0, completed: 0, failed: 0, avgDuration: 0 },
@@ -876,9 +793,9 @@ router.get('/dashboard', async (req, res) => {
 
         // Fetch all stats in parallel
         const [leadsData, callsData, campaignsData] = await Promise.all([
-            supabase.from('leads').select('status'),
-            supabase.from('calls').select('status, duration_seconds'),
-            supabase.from('campaigns').select('*'),
+            db.from('leads').select('status'),
+            db.from('calls').select('status, duration_seconds'),
+            db.from('campaigns').select('*'),
         ]);
 
         const leads = leadsData.data || [];
@@ -920,9 +837,9 @@ router.get('/dashboard', async (req, res) => {
 // Get current user's profile
 router.get('/profile', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const userId = await getUserId(req);
@@ -930,7 +847,7 @@ router.get('/profile', async (req, res) => {
             return res.status(401).json({ error: 'Authentication required' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .select('*')
             .eq('id', userId)
@@ -950,9 +867,9 @@ router.get('/profile', async (req, res) => {
 // Update current user's profile
 router.patch('/profile', async (req, res) => {
     try {
-        const supabase = getSupabaseClient(req);
-        if (!supabase) {
-            return res.status(400).json({ error: 'Supabase not configured' });
+        const db = getUserDatabase(req);
+        if (!db) {
+            return res.status(400).json({ error: 'Database not configured' });
         }
 
         const userId = await getUserId(req);
@@ -962,7 +879,7 @@ router.patch('/profile', async (req, res) => {
 
         const { company_name, company_website, timezone } = req.body;
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('profiles')
             .update({ company_name, company_website, timezone })
             .eq('id', userId)

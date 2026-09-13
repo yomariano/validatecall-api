@@ -6,7 +6,7 @@
 
 import { Router } from 'express';
 import multer from 'multer';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import {
     // Provider settings
     getEmailProviderSettings,
@@ -30,13 +30,10 @@ import {
 
 const router = Router();
 
-// Supabase client for storage
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// PostgreSQL client for storage
+const db = createDatabase();
 
-// Configure multer for memory storage (we'll upload to Supabase)
+// Configure multer for memory storage (we'll upload to PostgreSQL)
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -451,7 +448,7 @@ router.post('/brand', async (req, res) => {
  */
 router.post('/brand/logo', upload.single('logo'), async (req, res) => {
     try {
-        const { userId } = req.body;
+        const userId = req.user.id;
 
         if (!userId) {
             return res.status(400).json({ error: 'userId is required' });
@@ -461,57 +458,17 @@ router.post('/brand/logo', upload.single('logo'), async (req, res) => {
             return res.status(400).json({ error: 'No file uploaded' });
         }
 
-        // Generate unique filename
-        const fileExt = req.file.originalname.split('.').pop();
-        const fileName = `${userId}/logo-${Date.now()}.${fileExt}`;
-
-        // Upload to Supabase Storage
-        const { data, error } = await supabase.storage
-            .from('brand-logos')
-            .upload(fileName, req.file.buffer, {
-                contentType: req.file.mimetype,
-                upsert: true,
-            });
-
-        if (error) {
-            // If bucket doesn't exist, create it
-            if (error.message?.includes('not found') || error.statusCode === '404') {
-                // Try to create the bucket
-                const { error: createError } = await supabase.storage.createBucket('brand-logos', {
-                    public: true,
-                    fileSizeLimit: 2097152, // 2MB
-                    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/svg+xml', 'image/webp'],
-                });
-
-                if (createError && !createError.message?.includes('already exists')) {
-                    console.error('Failed to create bucket:', createError);
-                    return res.status(500).json({ error: 'Failed to create storage bucket' });
-                }
-
-                // Retry upload
-                const { data: retryData, error: retryError } = await supabase.storage
-                    .from('brand-logos')
-                    .upload(fileName, req.file.buffer, {
-                        contentType: req.file.mimetype,
-                        upsert: true,
-                    });
-
-                if (retryError) {
-                    console.error('Failed to upload logo (retry):', retryError);
-                    return res.status(500).json({ error: 'Failed to upload logo' });
-                }
-            } else {
-                console.error('Failed to upload logo:', error);
-                return res.status(500).json({ error: 'Failed to upload logo' });
-            }
-        }
-
-        // Get public URL
-        const { data: publicUrlData } = supabase.storage
-            .from('brand-logos')
-            .getPublicUrl(fileName);
-
-        const logoUrl = publicUrlData.publicUrl;
+        const bytes = req.file.buffer;
+        const types = [
+            ['image/png', bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))],
+            ['image/jpeg', bytes[0]===255 && bytes[1]===216 && bytes[2]===255],
+            ['image/gif', ['GIF87a','GIF89a'].includes(bytes.subarray(0,6).toString())],
+            ['image/webp', bytes.subarray(0,4).toString()==='RIFF' && bytes.subarray(8,12).toString()==='WEBP'],
+        ];
+        const contentType = types.find(([,valid]) => valid)?.[0];
+        if (!contentType) return res.status(400).json({ error: 'Upload a PNG, JPEG, GIF or WebP image.' });
+        const { rows } = await db.query('INSERT INTO brand_assets(user_id,content_type,content) VALUES($1,$2,$3) RETURNING id', [userId,contentType,bytes]);
+        const logoUrl = new URL(`/api/assets/${rows[0].id}`, process.env.API_PUBLIC_URL || 'http://localhost:3002').href;
 
         // Save the URL to user's brand settings
         const saveResult = await saveBrandSettings(userId, { brandLogoUrl: logoUrl });
@@ -544,18 +501,7 @@ router.delete('/brand/logo', async (req, res) => {
             return res.status(400).json({ error: 'userId is required' });
         }
 
-        // Get current logo URL to delete from storage
-        const brandResult = await getBrandSettings(userId);
-        if (brandResult.success && brandResult.brandLogoUrl) {
-            // Extract file path from URL
-            const url = new URL(brandResult.brandLogoUrl);
-            const pathParts = url.pathname.split('/brand-logos/');
-            if (pathParts.length > 1) {
-                const filePath = pathParts[1];
-                // Delete from storage
-                await supabase.storage.from('brand-logos').remove([filePath]);
-            }
-        }
+        await db.query('DELETE FROM brand_assets WHERE user_id=$1', [req.user.id]);
 
         // Clear the logo URL in settings
         const saveResult = await saveBrandSettings(userId, { brandLogoUrl: null });

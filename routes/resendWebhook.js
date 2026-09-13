@@ -10,9 +10,9 @@
  */
 
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { Resend } from 'resend';
-import crypto from 'crypto';
+import { verifyResendEvent } from '../services/webhookVerification.js';
 import { recordTrackingEvent, processUnsubscribe } from '../services/emailTracking.js';
 import emailSequenceScheduler from '../services/emailSequenceScheduler.js';
 
@@ -20,56 +20,8 @@ const router = Router();
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
-// Initialize Supabase client with service role for backend operations
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-/**
- * Verify Resend webhook signature
- * @see https://resend.com/docs/dashboard/webhooks/verify-signature
- */
-function verifyWebhookSignature(payload, signature, secret) {
-    if (!secret) {
-        console.warn('RESEND_WEBHOOK_SECRET not set - skipping verification');
-        return true; // Allow in development
-    }
-
-    try {
-        // Resend uses svix for webhooks
-        // Signature format: v1,timestamp,signature
-        const parts = signature.split(',');
-        if (parts.length < 3) return false;
-
-        const timestamp = parts.find(p => p.startsWith('t='))?.split('=')[1];
-        const sig = parts.find(p => p.startsWith('v1='))?.split('=')[1];
-
-        if (!timestamp || !sig) return false;
-
-        // Check timestamp to prevent replay attacks (5 min tolerance)
-        const now = Math.floor(Date.now() / 1000);
-        if (Math.abs(now - parseInt(timestamp)) > 300) {
-            console.warn('Webhook timestamp too old');
-            return false;
-        }
-
-        // Compute expected signature
-        const signedPayload = `${timestamp}.${payload}`;
-        const expectedSig = crypto
-            .createHmac('sha256', secret)
-            .update(signedPayload)
-            .digest('hex');
-
-        return crypto.timingSafeEqual(
-            Buffer.from(sig),
-            Buffer.from(expectedSig)
-        );
-    } catch (err) {
-        console.error('Signature verification error:', err);
-        return false;
-    }
-}
+// Initialize PostgreSQL client with service role for backend operations
+const db = createDatabase();
 
 /**
  * Fetch full email content from Resend
@@ -104,7 +56,7 @@ async function fetchEmailContent(emailId) {
 async function findOriginalEmail(fromEmail, toEmail, inReplyTo) {
     // First, try to match by in-reply-to header (most accurate)
     if (inReplyTo) {
-        const { data: emailLog } = await supabase
+        const { data: emailLog } = await db
             .from('email_logs')
             .select('*, leads:metadata->>leadId')
             .eq('message_id', inReplyTo)
@@ -116,7 +68,7 @@ async function findOriginalEmail(fromEmail, toEmail, inReplyTo) {
     }
 
     // Fallback: find the most recent cold email sent to this sender
-    const { data: emailLog } = await supabase
+    const { data: emailLog } = await db
         .from('email_logs')
         .select('*')
         .eq('email_type', 'cold_email')
@@ -132,7 +84,7 @@ async function findOriginalEmail(fromEmail, toEmail, inReplyTo) {
  * Find lead by email address
  */
 async function findLeadByEmail(email) {
-    const { data: lead } = await supabase
+    const { data: lead } = await db
         .from('leads')
         .select('id, user_id, name')
         .eq('email', email)
@@ -146,25 +98,14 @@ async function findLeadByEmail(email) {
  * Main webhook endpoint for Resend events
  */
 router.post('/webhook', async (req, res) => {
-    const signature = req.headers['svix-signature'] || req.headers['resend-signature'];
-    const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-
-    // Verify signature (if secret is configured)
-    if (process.env.RESEND_WEBHOOK_SECRET) {
-        const isValid = verifyWebhookSignature(
-            rawBody,
-            signature,
-            process.env.RESEND_WEBHOOK_SECRET
-        );
-
-        if (!isValid) {
-            console.error('Invalid webhook signature');
-            return res.status(401).json({ error: 'Invalid signature' });
-        }
-    }
-
+    if (!process.env.RESEND_WEBHOOK_SECRET) return res.status(503).json({ error: 'Resend webhook secret is not configured' });
+    let event;
     try {
-        const event = req.body;
+        event = verifyResendEvent(req.body, req.headers, process.env.RESEND_WEBHOOK_SECRET);
+    } catch {
+        return res.status(401).json({ error: 'Invalid webhook signature or payload' });
+    }
+    try {
         const eventType = event.type;
 
         console.log(`[Resend Webhook] Received event: ${eventType}`);
@@ -257,7 +198,7 @@ async function handleEmailReceived(data) {
     const fullEmail = await fetchEmailContent(email_id);
 
     // Store the response
-    const { data: response, error } = await supabase
+    const { data: response, error } = await db
         .from('email_responses')
         .insert({
             resend_email_id: email_id,
@@ -288,7 +229,7 @@ async function handleEmailReceived(data) {
 
     // Update lead status if found
     if (leadId) {
-        await supabase
+        await db
             .from('leads')
             .update({
                 status: 'interested', // They replied, so they're interested
@@ -303,7 +244,7 @@ async function handleEmailReceived(data) {
 
     // Stop any active sequences for this lead (reply = stop condition)
     if (leadId && userId) {
-        const { data: enrollments } = await supabase
+        const { data: enrollments } = await db
             .from('email_sequence_enrollments')
             .select('id, sequence_id')
             .eq('lead_id', leadId)
@@ -314,7 +255,7 @@ async function handleEmailReceived(data) {
             await emailSequenceScheduler.handleStopCondition(enrollment.id, 'reply');
 
             // Update sequence reply count
-            await supabase.rpc('increment_sequence_stats', {
+            await db.rpc('increment_sequence_stats', {
                 p_sequence_id: enrollment.sequence_id,
                 p_stat_name: 'total_replies',
                 p_increment: 1
@@ -335,7 +276,7 @@ async function handleEmailBounced(data) {
     const recipientEmail = Array.isArray(to) ? to[0] : to;
 
     // Update email log status and get tracking info
-    const { data: emailLog } = await supabase
+    const { data: emailLog } = await db
         .from('email_logs')
         .update({
             status: 'bounced',
@@ -360,14 +301,14 @@ async function handleEmailBounced(data) {
 
     // Update sequence/step bounce stats
     if (emailLog?.sequence_id) {
-        await supabase.rpc('increment_sequence_stats', {
+        await db.rpc('increment_sequence_stats', {
             p_sequence_id: emailLog.sequence_id,
             p_stat_name: 'total_bounces',
             p_increment: 1
         }).catch(() => {});
 
         if (emailLog.step_number) {
-            await supabase.rpc('increment_step_stats', {
+            await db.rpc('increment_step_stats', {
                 p_sequence_id: emailLog.sequence_id,
                 p_step_number: emailLog.step_number,
                 p_stat_name: 'bounces',
@@ -377,14 +318,14 @@ async function handleEmailBounced(data) {
     }
 
     // Find and update lead status
-    const { data: lead } = await supabase
+    const { data: lead } = await db
         .from('leads')
         .select('id')
         .eq('email', recipientEmail)
         .maybeSingle();
 
     if (lead) {
-        await supabase
+        await db
             .from('leads')
             .update({
                 status: 'invalid',
@@ -405,20 +346,20 @@ async function handleEmailComplained(data) {
     const recipientEmail = Array.isArray(to) ? to[0] : to;
 
     // Update email log status
-    await supabase
+    await db
         .from('email_logs')
         .update({ status: 'complained' })
         .eq('resend_id', email_id);
 
     // Find and update lead - mark as not interested
-    const { data: lead } = await supabase
+    const { data: lead } = await db
         .from('leads')
         .select('id')
         .eq('email', recipientEmail)
         .maybeSingle();
 
     if (lead) {
-        await supabase
+        await db
             .from('leads')
             .update({ status: 'not_interested', notes: 'Marked as spam' })
             .eq('id', lead.id);
@@ -432,7 +373,7 @@ async function handleEmailDelivered(data) {
     console.log('[Resend] Email delivered:', data.email_id);
 
     // Update email log status and delivered_at
-    const { data: emailLog } = await supabase
+    const { data: emailLog } = await db
         .from('email_logs')
         .update({
             status: 'delivered',
@@ -458,7 +399,7 @@ async function handleEmailOpened(data) {
     console.log('[Resend] Email opened:', data.email_id);
 
     // Get email log to find tracking_id
-    const { data: emailLog } = await supabase
+    const { data: emailLog } = await db
         .from('email_logs')
         .select('tracking_id, enrollment_id')
         .eq('resend_id', data.email_id)
@@ -481,7 +422,7 @@ async function handleEmailClicked(data) {
     console.log('[Resend] Email clicked:', data.email_id, data.link);
 
     // Get email log to find tracking_id
-    const { data: emailLog } = await supabase
+    const { data: emailLog } = await db
         .from('email_logs')
         .select('tracking_id, enrollment_id')
         .eq('resend_id', data.email_id)

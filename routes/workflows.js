@@ -1,23 +1,24 @@
+import { ownResource, ownReferences } from '../middleware/ownership.js';
 /**
  * Multi-Channel Workflow Routes
  * API endpoints for managing outreach workflows (email + calls + SMS)
  */
 
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { batchPersonalizeLeads } from '../services/emailPersonalization.js';
 
 const router = Router();
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 /**
  * GET /api/workflows
  * List user's workflows
  */
+router.use(ownReferences(db));
+router.param('id', ownResource(db, 'outreach_workflows'));
+
 router.get('/', async (req, res) => {
     try {
         const userId = req.headers['x-user-id'];
@@ -25,7 +26,7 @@ router.get('/', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('outreach_workflows')
             .select(`
                 *,
@@ -81,7 +82,7 @@ router.post('/', async (req, res) => {
         }
 
         // Create workflow
-        const { data: workflow, error: workflowError } = await supabase
+        const { data: workflow, error: workflowError } = await db
             .from('outreach_workflows')
             .insert({
                 user_id: userId,
@@ -134,7 +135,7 @@ router.post('/', async (req, res) => {
                 wait_for: step.waitFor || null,
             }));
 
-            const { error: stepsError } = await supabase
+            const { error: stepsError } = await db
                 .from('workflow_steps')
                 .insert(stepsData);
 
@@ -163,7 +164,7 @@ router.get('/:id', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { data: workflow, error } = await supabase
+        const { data: workflow, error } = await db
             .from('outreach_workflows')
             .select(`
                 *,
@@ -185,7 +186,7 @@ router.get('/:id', async (req, res) => {
         }
 
         // Get enrollment stats
-        const { data: enrollmentStats } = await supabase
+        const { data: enrollmentStats } = await db
             .from('workflow_enrollments')
             .select('status')
             .eq('workflow_id', id);
@@ -261,7 +262,7 @@ router.patch('/:id', async (req, res) => {
         if (defaultAssistantId !== undefined) updates.default_assistant_id = defaultAssistantId;
         if (callMaxRetries !== undefined) updates.call_max_retries = callMaxRetries;
 
-        const { data: workflow, error } = await supabase
+        const { data: workflow, error } = await db
             .from('outreach_workflows')
             .update(updates)
             .eq('id', id)
@@ -275,7 +276,7 @@ router.patch('/:id', async (req, res) => {
 
         // Update steps if provided
         if (steps && Array.isArray(steps)) {
-            await supabase
+            await db
                 .from('workflow_steps')
                 .delete()
                 .eq('workflow_id', id);
@@ -299,7 +300,7 @@ router.patch('/:id', async (req, res) => {
                 wait_for: step.waitFor || null,
             }));
 
-            await supabase.from('workflow_steps').insert(stepsData);
+            await db.from('workflow_steps').insert(stepsData);
         }
 
         res.json({ workflow });
@@ -322,7 +323,7 @@ router.delete('/:id', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        const { error } = await supabase
+        const { error } = await db
             .from('outreach_workflows')
             .delete()
             .eq('id', id)
@@ -354,7 +355,7 @@ router.post('/:id/activate', async (req, res) => {
         }
 
         // Get workflow with campaign
-        const { data: workflow, error: workflowError } = await supabase
+        const { data: workflow, error: workflowError } = await db
             .from('outreach_workflows')
             .select(`
                 *,
@@ -385,7 +386,7 @@ router.post('/:id/activate', async (req, res) => {
         }
 
         // Check existing enrollments
-        const { data: existingEnrollments } = await supabase
+        const { data: existingEnrollments } = await db
             .from('workflow_enrollments')
             .select('lead_id')
             .eq('workflow_id', id)
@@ -395,12 +396,12 @@ router.post('/:id/activate', async (req, res) => {
         const newLeadIds = leadsToEnroll.filter(lid => !existingLeadIds.has(lid));
 
         // Get unsubscribed emails
-        const { data: leads } = await supabase
+        const { data: leads } = await db
             .from('leads')
             .select('id, email, phone')
             .in('id', newLeadIds);
 
-        const { data: unsubscribes } = await supabase
+        const { data: unsubscribes } = await db
             .from('email_unsubscribes')
             .select('email')
             .eq('user_id', userId);
@@ -434,7 +435,7 @@ router.post('/:id/activate', async (req, res) => {
             next_action_type: firstStep.step_type,
         }));
 
-        const { error: enrollError } = await supabase
+        const { error: enrollError } = await db
             .from('workflow_enrollments')
             .insert(enrollments);
 
@@ -443,7 +444,7 @@ router.post('/:id/activate', async (req, res) => {
         }
 
         // Update workflow
-        await supabase
+        await db
             .from('outreach_workflows')
             .update({
                 status: 'active',
@@ -482,13 +483,13 @@ router.post('/:id/pause', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        await supabase
+        await db
             .from('outreach_workflows')
             .update({ status: 'paused', updated_at: new Date().toISOString() })
             .eq('id', id)
             .eq('user_id', userId);
 
-        await supabase
+        await db
             .from('workflow_enrollments')
             .update({ status: 'paused', updated_at: new Date().toISOString() })
             .eq('workflow_id', id)
@@ -514,13 +515,13 @@ router.post('/:id/resume', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        await supabase
+        await db
             .from('outreach_workflows')
             .update({ status: 'active', updated_at: new Date().toISOString() })
             .eq('id', id)
             .eq('user_id', userId);
 
-        await supabase
+        await db
             .from('workflow_enrollments')
             .update({
                 status: 'active',
@@ -551,7 +552,7 @@ router.get('/:id/analytics', async (req, res) => {
         }
 
         // Get workflow with steps
-        const { data: workflow } = await supabase
+        const { data: workflow } = await db
             .from('outreach_workflows')
             .select('*, steps:workflow_steps(*)')
             .eq('id', id)
@@ -563,7 +564,7 @@ router.get('/:id/analytics', async (req, res) => {
         }
 
         // Get enrollment breakdown
-        const { data: enrollments } = await supabase
+        const { data: enrollments } = await db
             .from('workflow_enrollments')
             .select('status, current_step, emails_sent, calls_made, opens, clicks')
             .eq('workflow_id', id);
@@ -600,7 +601,7 @@ router.get('/:id/analytics', async (req, res) => {
         });
 
         // Recent actions
-        const { data: recentActions } = await supabase
+        const { data: recentActions } = await db
             .from('workflow_action_log')
             .select('*, lead:leads(name, email)')
             .eq('workflow_id', id)
@@ -644,7 +645,7 @@ router.get('/:id/enrollments', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        let query = supabase
+        let query = db
             .from('workflow_enrollments')
             .select(`
                 *,

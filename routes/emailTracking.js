@@ -4,7 +4,7 @@
  */
 
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { recordTrackingEvent, processUnsubscribe } from '../services/emailTracking.js';
 import emailSequenceScheduler from '../services/emailSequenceScheduler.js';
 
@@ -17,10 +17,7 @@ const TRACKING_PIXEL = Buffer.from(
     'base64'
 );
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 /**
  * GET /api/email-tracking/open
@@ -299,7 +296,7 @@ router.get('/analytics', async (req, res) => {
 
         // Try RPC first
         let analytics;
-        const { data: rpcResult, error: rpcError } = await supabase.rpc('get_email_analytics', {
+        const { data: rpcResult, error: rpcError } = await db.rpc('get_email_analytics', {
             p_user_id: userId,
             p_start_date: start.toISOString(),
             p_end_date: end.toISOString()
@@ -309,7 +306,7 @@ router.get('/analytics', async (req, res) => {
             analytics = rpcResult[0];
         } else {
             // Fallback: manual query
-            const { data: emailLogs } = await supabase
+            const { data: emailLogs } = await db
                 .from('email_logs')
                 .select('*')
                 .eq('user_id', userId)
@@ -325,7 +322,7 @@ router.get('/analytics', async (req, res) => {
             const totalOpens = logs.reduce((sum, l) => sum + (l.open_count || 0), 0);
             const totalClicks = logs.reduce((sum, l) => sum + (l.click_count || 0), 0);
 
-            const { count: unsubs } = await supabase
+            const { count: unsubs } = await db
                 .from('email_unsubscribes')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId)
@@ -371,7 +368,7 @@ router.get('/analytics/timeseries', async (req, res) => {
         const end = endDate ? new Date(endDate) : new Date();
 
         // Get email logs
-        const { data: logs } = await supabase
+        const { data: logs } = await db
             .from('email_logs')
             .select('created_at, opened_at, clicked_at, bounced_at')
             .eq('user_id', userId)
@@ -423,7 +420,7 @@ router.get('/recent', async (req, res) => {
             return res.status(401).json({ error: 'User ID required' });
         }
 
-        let query = supabase
+        let query = db
             .from('email_tracking_events')
             .select(`
                 *,

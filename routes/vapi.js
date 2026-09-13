@@ -1,5 +1,9 @@
+import { guardVapiResources, recordVapiCallOwner } from '../services/vapiOwnership.js';
+import { requireWebhookSecret } from '../middleware/webhookAuth.js';
+import { ownResource, ownReferences } from '../middleware/ownership.js';
+import { requireOwnUser } from '../middleware/auth.js';
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import {
     getAMDConfig,
     determineCallOutcome,
@@ -10,6 +14,7 @@ import {
 } from '../config/amd.js';
 
 const router = Router();
+router.param('userId', requireOwnUser);
 
 const VAPI_API_URL = 'https://api.vapi.ai';
 const VAPI_API_KEY = process.env.VAPI_API_KEY;
@@ -167,11 +172,8 @@ async function makeVoIPcloudCall(destinationNumber, callerId, assistantId = null
     return result;
 }
 
-// Initialize Supabase for free tier checks
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Initialize PostgreSQL for free tier checks
+const db = createDatabase();
 
 // Check if in development mode
 const IS_DEV = process.env.NODE_ENV !== 'production';
@@ -182,48 +184,8 @@ const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
  * Returns the authenticated userId or throws an error
  */
 async function validateUserAccess(req, paramUserId) {
-    // In dev mode without token, allow mock user access
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-
-    if (!token && IS_DEV) {
-        // Dev mode: allow access if paramUserId matches mock user or is the same
-        if (paramUserId === MOCK_USER_ID) {
-            return MOCK_USER_ID;
-        }
-        // In dev mode, allow any userId for testing
-        console.log(`[Dev Mode] Allowing access to userId: ${paramUserId}`);
-        return paramUserId;
-    }
-
-    if (!token) {
-        throw new Error('Authentication required');
-    }
-
-    // Verify token and get user
-    const { createClient: createAuthClient } = await import('@supabase/supabase-js');
-    const authSupabase = createAuthClient(
-        process.env.SUPABASE_URL,
-        process.env.SUPABASE_ANON_KEY,
-        {
-            global: {
-                headers: { Authorization: `Bearer ${token}` }
-            }
-        }
-    );
-
-    const { data: { user }, error } = await authSupabase.auth.getUser();
-
-    if (error || !user) {
-        throw new Error('Invalid authentication token');
-    }
-
-    // Verify the authenticated user matches the requested userId
-    if (user.id !== paramUserId) {
-        throw new Error('Access denied: User ID mismatch');
-    }
-
-    return user.id;
+    if (!req.user || req.user.id !== paramUserId) throw new Error('Access denied: User ID mismatch');
+    return req.user.id;
 }
 
 // Shared demo phone for free tier users
@@ -238,7 +200,7 @@ async function reserveFreeTierCall(userId) {
     if (!userId) return { canCall: true, isFreeTier: false, reserved: true };
 
     // Check for active subscription first
-    const { data: subscription } = await supabase
+    const { data: subscription } = await db
         .from('user_subscriptions')
         .select('status')
         .eq('user_id', userId)
@@ -250,7 +212,7 @@ async function reserveFreeTierCall(userId) {
     }
 
     // Get current usage
-    let { data: usage } = await supabase
+    let { data: usage } = await db
         .from('free_tier_usage')
         .select('calls_used, calls_limit, call_seconds_per_call')
         .eq('user_id', userId)
@@ -258,7 +220,7 @@ async function reserveFreeTierCall(userId) {
 
     // Create record if doesn't exist
     if (!usage) {
-        const { data: newUsage, error: createError } = await supabase
+        const { data: newUsage, error: createError } = await db
             .from('free_tier_usage')
             .insert({ user_id: userId, calls_used: 0 })
             .select()
@@ -290,7 +252,7 @@ async function reserveFreeTierCall(userId) {
     // ATOMIC: Reserve one call with optimistic locking
     const newTotal = currentUsed + 1;
 
-    const { data: updated, error: updateError } = await supabase
+    const { data: updated, error: updateError } = await db
         .from('free_tier_usage')
         .update({ calls_used: newTotal })
         .eq('user_id', userId)
@@ -302,7 +264,7 @@ async function reserveFreeTierCall(userId) {
         // Race condition detected - retry once
         console.log('[Calls] Race condition detected, retrying reservation...');
 
-        const { data: freshUsage } = await supabase
+        const { data: freshUsage } = await db
             .from('free_tier_usage')
             .select('calls_used, calls_limit, call_seconds_per_call')
             .eq('user_id', userId)
@@ -325,7 +287,7 @@ async function reserveFreeTierCall(userId) {
             };
         }
 
-        const { data: retryUpdate, error: retryError } = await supabase
+        const { data: retryUpdate, error: retryError } = await db
             .from('free_tier_usage')
             .update({ calls_used: freshUsage.calls_used + 1 })
             .eq('user_id', userId)
@@ -373,7 +335,7 @@ async function rollbackFreeTierCall(userId) {
 
     try {
         // Get current usage
-        const { data: usage } = await supabase
+        const { data: usage } = await db
             .from('free_tier_usage')
             .select('calls_used')
             .eq('user_id', userId)
@@ -384,7 +346,7 @@ async function rollbackFreeTierCall(userId) {
         }
 
         // Decrement the call count
-        const { error } = await supabase
+        const { error } = await db
             .from('free_tier_usage')
             .update({ calls_used: usage.calls_used - 1 })
             .eq('user_id', userId);
@@ -425,14 +387,14 @@ async function getUserPhoneNumber(userId) {
     // First, reset any numbers that need daily reset
     const today = new Date().toISOString().split('T')[0];
 
-    await supabase
+    await db
         .from('user_phone_numbers')
         .update({ daily_calls_used: 0, last_reset_date: today })
         .eq('user_id', userId)
         .lt('last_reset_date', today);
 
     // Get the phone number with lowest usage that's under limit
-    const { data: phoneNumber, error } = await supabase
+    const { data: phoneNumber, error } = await db
         .from('user_phone_numbers')
         .select('*')
         .eq('user_id', userId)
@@ -458,7 +420,7 @@ async function getUserPhoneNumber(userId) {
  */
 async function incrementPhoneUsage(phoneNumberId, userId, callId = null) {
     // Try RPC first (atomic increment)
-    const { error: rpcError } = await supabase.rpc('increment_phone_usage', {
+    const { error: rpcError } = await db.rpc('increment_phone_usage', {
         p_phone_number_id: phoneNumberId,
         p_user_id: userId,
         p_call_id: callId
@@ -469,7 +431,7 @@ async function incrementPhoneUsage(phoneNumberId, userId, callId = null) {
         console.log('  RPC not available, using fallback increment');
 
         // Get current values
-        const { data: current, error: readError } = await supabase
+        const { data: current, error: readError } = await db
             .from('user_phone_numbers')
             .select('daily_calls_used, total_calls_made')
             .eq('phone_number_id', phoneNumberId)
@@ -482,7 +444,7 @@ async function incrementPhoneUsage(phoneNumberId, userId, callId = null) {
         }
 
         // Update with incremented values
-        const { error: updateError } = await supabase
+        const { error: updateError } = await db
             .from('user_phone_numbers')
             .update({
                 daily_calls_used: (current.daily_calls_used || 0) + 1,
@@ -504,7 +466,7 @@ async function incrementPhoneUsage(phoneNumberId, userId, callId = null) {
  * Get user's phone stats from database
  */
 async function getUserPhoneStats(userId) {
-    const { data: numbers, error } = await supabase
+    const { data: numbers, error } = await db
         .from('user_phone_numbers')
         .select('*')
         .eq('user_id', userId)
@@ -566,6 +528,7 @@ class PhoneNumberRotator {
 
         // Clean up old date entries every hour to prevent memory leak
         this.cleanupInterval = setInterval(() => this.cleanupOldEntries(), 60 * 60 * 1000);
+        this.cleanupInterval.unref();
 
         console.log(`📞 Phone Rotator initialized with ${this.phoneNumbers.length} number(s), max ${this.maxCallsPerDay} calls/day each`);
     }
@@ -674,6 +637,9 @@ class PhoneNumberRotator {
 const phoneRotator = new PhoneNumberRotator();
 
 // Check if Vapi is configured
+router.use(guardVapiResources(db));
+router.use((req, res, next) => req.user ? ownReferences(db)(req, res, next) : next());
+
 router.get('/status', (req, res) => {
     res.json({
         configured: !!VAPI_API_KEY,
@@ -709,7 +675,7 @@ function getAMDPresetDescription(preset) {
 // =============================================
 // VAPI WEBHOOK - Receives call updates and transcripts
 // =============================================
-router.post('/webhook', async (req, res) => {
+router.post('/webhook', requireWebhookSecret('VAPI_WEBHOOK_SECRET', 'x-vapi-secret'), async (req, res) => {
     try {
         const { message } = req.body;
 
@@ -739,7 +705,7 @@ router.post('/webhook', async (req, res) => {
 
                 console.log(`📊 Call ${call.id} outcome: ${callOutcome} (endedReason: ${endedReason})`);
 
-                const { error } = await supabase
+                const { error } = await db
                     .from('calls')
                     .update({
                         status: 'completed',
@@ -769,7 +735,7 @@ router.post('/webhook', async (req, res) => {
             const { status } = message;
 
             if (call?.id && status) {
-                await supabase
+                await db
                     .from('calls')
                     .update({
                         status: status,
@@ -801,13 +767,8 @@ router.get('/public-key', (req, res) => {
 });
 
 // Get phone number rotation stats
-router.get('/phone-stats', (req, res) => {
-    res.json({
-        numbers: phoneRotator.getStats(),
-        totalNumbers: phoneRotator.phoneNumbers.length,
-        totalRemainingCapacity: phoneRotator.getTotalRemainingCapacity(),
-        maxCallsPerNumberPerDay: phoneRotator.maxCallsPerDay,
-    });
+router.get('/phone-stats', async (req, res) => {
+    res.json(await getUserPhoneStats(req.user.id));
 });
 
 /**
@@ -884,262 +845,15 @@ NEGOTIATION APPROACH:
 });
 
 // Initiate a single call
-router.post('/call', async (req, res) => {
-    try {
-        if (!VAPI_API_KEY) {
-            return res.status(400).json({ error: 'Vapi API key not configured' });
-        }
-
-        const {
-            phoneNumber,
-            customerName,
-            productIdea,
-            companyContext,
-            assistant: customAssistant,
-            assistantId, // ID of pre-configured assistant from Vapi
-            amdPreset = DEFAULT_AMD_PRESET // AMD preset: 'aggressive', 'balanced', 'conservative', 'disabled'
-        } = req.body;
-
-        if (!phoneNumber) {
-            return res.status(400).json({ error: 'phoneNumber is required' });
-        }
-
-        // Route Irish calls through VoIPcloud click-to-call
-        if (isIrishNumber(phoneNumber)) {
-            if (!VOIPCLOUD_TOKEN) {
-                return res.status(400).json({
-                    error: 'Irish calls require VoIPcloud configuration. Set VOIPCLOUD_API_TOKEN in .env',
-                    isIrishNumber: true,
-                });
-            }
-
-            console.log(`📞 Routing Irish number ${phoneNumber} via VoIPcloud`);
-            if (assistantId) {
-                console.log(`📞 Using selected assistant: ${assistantId}`);
-            }
-
-            try {
-                const voipcloudData = await makeVoIPcloudCall(
-                    phoneNumber,
-                    process.env.VOIPCLOUD_CALLER_ID || '+35312655181',
-                    assistantId // Pass the selected assistant ID
-                );
-                return res.json({
-                    id: voipcloudData.call_id || `voipcloud-${Date.now()}`,
-                    provider: 'voipcloud',
-                    status: 'initiated',
-                    phoneNumber,
-                    customerName,
-                    assistantUsed: assistantId || 'default',
-                    ...voipcloudData,
-                });
-            } catch (voipError) {
-                console.error('VoIPcloud call failed:', voipError.message);
-                return res.status(500).json({ error: voipError.message });
-            }
-        }
-
-        // Get next available phone number from rotation
-        const phoneNumberId = phoneRotator.usePhoneNumber();
-        if (!phoneNumberId) {
-            return res.status(429).json({
-                error: 'All phone numbers have reached their daily limit',
-                remainingCapacity: 0,
-                suggestion: 'Add more phone numbers or wait until tomorrow'
-            });
-        }
-
-        // Build the call payload
-        const callPayload = {
-            phoneNumberId: phoneNumberId,
-            customer: {
-                number: phoneNumber,
-                name: customerName || 'Prospect',
-            },
-        };
-
-        // If an assistantId is provided, use the pre-configured assistant
-        if (assistantId) {
-            callPayload.assistantId = assistantId;
-
-            // If product idea is also provided, override the assistant's messages
-            if (productIdea) {
-                const researchAssistant = createMarketResearchAssistant(productIdea, companyContext, amdPreset);
-                callPayload.assistantOverrides = {
-                    // Override the model with IVR detection prompt and tools
-                    model: {
-                        provider: researchAssistant.model.provider,
-                        model: researchAssistant.model.model,
-                        messages: researchAssistant.model.messages,
-                        tools: researchAssistant.model.tools, // Include endCall tool for IVR detection
-                    },
-                    firstMessage: researchAssistant.firstMessage,
-                    voicemailDetection: researchAssistant.voicemailDetection, // Include optimized AMD
-                };
-            } else {
-                // Even without product idea, add voicemail detection to the pre-configured assistant
-                const amdConfig = getAMDConfig(amdPreset);
-                callPayload.assistantOverrides = {
-                    voicemailDetection: amdConfig,
-                    model: {
-                        tools: [END_CALL_TOOL],
-                    },
-                };
-            }
-        } else {
-            // Otherwise, use the custom assistant or create a dynamic one
-            callPayload.assistant = customAssistant || createMarketResearchAssistant(productIdea, companyContext, amdPreset);
-        }
-
-        console.log(`📞 [AMD] Using preset: ${amdPreset}, config:`, JSON.stringify(getAMDConfig(amdPreset), null, 2));
-
-        // Log the payload for debugging
-        console.log('📞 Vapi Call Payload:', JSON.stringify(callPayload, null, 2));
-
-        const response = await fetch(`${VAPI_API_URL}/call/phone`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${VAPI_API_KEY}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(callPayload),
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            return res.status(response.status).json({
-                error: error.message || 'Failed to initiate call'
-            });
-        }
-
-        const data = await response.json();
-        res.json({
-            ...data,
-            _rotation: {
-                phoneNumberIdUsed: phoneNumberId,
-                remainingCapacity: phoneRotator.getTotalRemainingCapacity(),
-            }
-        });
-    } catch (error) {
-        console.error('Vapi call error:', error);
-        res.status(500).json({ error: error.message });
-    }
+router.post('/call', (req, res, next) => {
+    req.url = `/user/${req.user.id}/call`;
+    next();
 });
 
 // Batch initiate calls
-router.post('/calls/batch', async (req, res) => {
-    try {
-        if (!VAPI_API_KEY) {
-            return res.status(400).json({ error: 'Vapi API key not configured' });
-        }
-
-        const { phoneNumbers, productIdea, companyContext, delayMs = 2000, amdPreset = DEFAULT_AMD_PRESET } = req.body;
-
-        if (!phoneNumbers || !Array.isArray(phoneNumbers)) {
-            return res.status(400).json({ error: 'phoneNumbers array is required' });
-        }
-
-        // Check if we have enough capacity
-        const remainingCapacity = phoneRotator.getTotalRemainingCapacity();
-        if (remainingCapacity === 0) {
-            return res.status(429).json({
-                error: 'All phone numbers have reached their daily limit',
-                remainingCapacity: 0,
-                requestedCalls: phoneNumbers.length,
-                suggestion: 'Add more phone numbers or wait until tomorrow'
-            });
-        }
-
-        // Warn if not enough capacity for all calls
-        const capacityWarning = phoneNumbers.length > remainingCapacity
-            ? `Warning: Only ${remainingCapacity} of ${phoneNumbers.length} calls can be made today`
-            : null;
-
-        console.log(`📞 [Batch] Using AMD preset: ${amdPreset}`);
-        const assistant = createMarketResearchAssistant(productIdea, companyContext, amdPreset);
-        const results = [];
-        let skippedDueToCapacity = 0;
-
-        for (let i = 0; i < phoneNumbers.length; i++) {
-            // Get next available phone number from rotation
-            const outboundPhoneNumberId = phoneRotator.usePhoneNumber();
-
-            if (!outboundPhoneNumberId) {
-                // No more capacity - mark remaining as skipped
-                results.push({
-                    phoneNumber: phoneNumbers[i].number,
-                    status: 'skipped',
-                    error: 'Daily call limit reached for all phone numbers',
-                });
-                skippedDueToCapacity++;
-                continue;
-            }
-
-            try {
-                const response = await fetch(`${VAPI_API_URL}/call/phone`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${VAPI_API_KEY}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        phoneNumberId: outboundPhoneNumberId,
-                        customer: {
-                            number: phoneNumbers[i].number,
-                            name: phoneNumbers[i].name || 'Prospect',
-                        },
-                        assistant,
-                    }),
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    results.push({
-                        phoneNumber: phoneNumbers[i].number,
-                        status: 'initiated',
-                        callId: result.id,
-                        outboundPhoneNumberId,
-                        result,
-                    });
-                } else {
-                    const error = await response.json();
-                    results.push({
-                        phoneNumber: phoneNumbers[i].number,
-                        status: 'failed',
-                        outboundPhoneNumberId,
-                        error: error.message,
-                    });
-                }
-            } catch (error) {
-                results.push({
-                    phoneNumber: phoneNumbers[i].number,
-                    status: 'failed',
-                    outboundPhoneNumberId,
-                    error: error.message,
-                });
-            }
-
-            // Add delay between calls to avoid rate limiting
-            if (i < phoneNumbers.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-            }
-        }
-
-        res.json({
-            results,
-            summary: {
-                total: phoneNumbers.length,
-                initiated: results.filter(r => r.status === 'initiated').length,
-                failed: results.filter(r => r.status === 'failed').length,
-                skipped: skippedDueToCapacity,
-                remainingCapacity: phoneRotator.getTotalRemainingCapacity(),
-                capacityWarning,
-            }
-        });
-    } catch (error) {
-        console.error('Vapi batch call error:', error);
-        res.status(500).json({ error: error.message });
-    }
+router.post('/calls/batch', (req, res, next) => {
+    req.url = `/user/${req.user.id}/calls/batch`;
+    next();
 });
 
 // Get call status
@@ -1172,57 +886,48 @@ router.get('/calls/:callId', async (req, res) => {
 // Get all calls
 router.get('/calls', async (req, res) => {
     try {
-        if (!VAPI_API_KEY) {
-            return res.status(400).json({ error: 'Vapi API key not configured' });
+        const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 100));
+        const { data: rows, error } = await db.from('vapi_calls').select('id')
+            .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(limit);
+        if (error) throw error;
+        const results = [];
+        for (const row of rows || []) {
+            if (!row.id) continue;
+            const response = await fetch(`${VAPI_API_URL}/call/${encodeURIComponent(row.id)}`, {
+                headers: { Authorization: `Bearer ${VAPI_API_KEY}` }, signal: AbortSignal.timeout(15000),
+            });
+            if (response.status === 404) continue;
+            if (!response.ok) return res.status(502).json({ error: 'Voice provider unavailable' });
+            results.push(await response.json());
         }
-
-        const limit = req.query.limit || 100;
-
-        const response = await fetch(`${VAPI_API_URL}/call?limit=${limit}`, {
-            headers: {
-                'Authorization': `Bearer ${VAPI_API_KEY}`,
-            },
-        });
-
-        if (!response.ok) {
-            return res.status(response.status).json({ error: 'Failed to fetch calls' });
-        }
-
-        const data = await response.json();
-        res.json(data);
+        res.json(results);
     } catch (error) {
-        console.error('Vapi get all calls error:', error);
-        res.status(500).json({ error: error.message });
+        console.error(error.message);
+        res.status(503).json({ error: 'Unable to load voice resources' });
     }
 });
 
 // Get all assistants
 router.get('/assistants', async (req, res) => {
     try {
-        if (!VAPI_API_KEY) {
-            return res.status(400).json({ error: 'Vapi API key not configured' });
-        }
-
-        const limit = req.query.limit || 100;
-
-        const response = await fetch(`${VAPI_API_URL}/assistant?limit=${limit}`, {
-            headers: {
-                'Authorization': `Bearer ${VAPI_API_KEY}`,
-            },
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            return res.status(response.status).json({
-                error: error.message || 'Failed to fetch assistants'
+        const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 100));
+        const { data: rows, error } = await db.from('vapi_assistants').select('id')
+            .eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(limit);
+        if (error) throw error;
+        const results = [];
+        for (const row of rows || []) {
+            if (!row.id) continue;
+            const response = await fetch(`${VAPI_API_URL}/assistant/${encodeURIComponent(row.id)}`, {
+                headers: { Authorization: `Bearer ${VAPI_API_KEY}` }, signal: AbortSignal.timeout(15000),
             });
+            if (response.status === 404) continue;
+            if (!response.ok) return res.status(502).json({ error: 'Voice provider unavailable' });
+            results.push(await response.json());
         }
-
-        const data = await response.json();
-        res.json(data);
+        res.json(results);
     } catch (error) {
-        console.error('Vapi get assistants error:', error);
-        res.status(500).json({ error: error.message });
+        console.error(error.message);
+        res.status(503).json({ error: 'Unable to load voice resources' });
     }
 });
 
@@ -1285,6 +990,11 @@ router.post('/assistants', async (req, res) => {
         }
 
         const data = await response.json();
+        const { error: ownershipError } = await db.from('vapi_assistants').insert({ id: data.id, user_id: req.user.id });
+        if (ownershipError) {
+            await fetch(`${VAPI_API_URL}/assistant/${data.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${VAPI_API_KEY}` } });
+            throw new Error('Unable to save assistant ownership');
+        }
         res.json(data);
     } catch (error) {
         console.error('Vapi create assistant error:', error);
@@ -1720,7 +1430,8 @@ router.post('/user/:userId/call', async (req, res) => {
                     assistantId // Pass the selected assistant ID
                 );
 
-                await supabase.from('calls').insert({
+                await recordVapiCallOwner(db, voipcloudData.call_id, userId);
+                await db.from('calls').insert({
                     user_id: userId,
                     vapi_call_id: voipcloudData.call_id || `voipcloud-${Date.now()}`,
                     phone_number: phoneNumber,
@@ -1850,6 +1561,7 @@ router.post('/user/:userId/call', async (req, res) => {
         }
 
         const data = await response.json();
+        await recordVapiCallOwner(db, data.id, userId);
 
         // Increment phone usage in database (for subscribed users)
         if (!usingFreeTierPhone) {
@@ -1862,7 +1574,7 @@ router.post('/user/:userId/call', async (req, res) => {
         }
 
         // Store call in database
-        await supabase.from('calls').insert({
+        await db.from('calls').insert({
             user_id: userId,
             vapi_call_id: data.id,
             phone_number: phoneNumber,
@@ -1992,12 +1704,13 @@ router.post('/user/:userId/calls/batch', async (req, res) => {
 
                 if (response.ok) {
                     const result = await response.json();
+                    await recordVapiCallOwner(db, result.id, userId);
 
                     // Increment usage
                     await incrementPhoneUsage(userPhone.phone_number_id, userId, result.id);
 
                     // Store call
-                    await supabase.from('calls').insert({
+                    await db.from('calls').insert({
                         user_id: userId,
                         vapi_call_id: result.id,
                         phone_number: phoneNumbers[i].number,
@@ -2072,7 +1785,7 @@ router.get('/user/:userId/phone-numbers', async (req, res) => {
             return res.status(403).json({ error: authError.message });
         }
 
-        const { data: numbers, error } = await supabase
+        const { data: numbers, error } = await db
             .from('user_phone_numbers')
             .select('*')
             .eq('user_id', userId)

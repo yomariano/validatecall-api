@@ -1,13 +1,11 @@
+import { ownResource, ownReferences } from '../middleware/ownership.js';
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 
 const router = Router();
 
-// Initialize Supabase
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Initialize PostgreSQL
+const db = createDatabase();
 
 // =============================================
 // SCHEDULED CALLS ENDPOINTS
@@ -17,6 +15,9 @@ const supabase = createClient(
  * Schedule a new call
  * POST /api/scheduled/calls
  */
+router.use(ownReferences(db));
+router.param('id', ownResource(db, 'scheduled_calls'));
+
 router.post('/calls', async (req, res) => {
     try {
         const {
@@ -53,7 +54,7 @@ router.post('/calls', async (req, res) => {
         }
 
         // Create scheduled call
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scheduled_calls')
             .insert({
                 user_id: userId,
@@ -100,7 +101,7 @@ router.get('/calls', async (req, res) => {
             return res.status(400).json({ error: 'userId is required' });
         }
 
-        let query = supabase
+        let query = db
             .from('scheduled_calls')
             .select(`
                 *,
@@ -139,7 +140,7 @@ router.get('/calls/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scheduled_calls')
             .select(`
                 *,
@@ -147,6 +148,7 @@ router.get('/calls/:id', async (req, res) => {
                 call:calls(id, status, duration_seconds, transcript, summary)
             `)
             .eq('id', id)
+            .eq('user_id', req.user.id)
             .single();
 
         if (error) {
@@ -179,10 +181,11 @@ router.patch('/calls/:id', async (req, res) => {
         } = req.body;
 
         // Check current status - only pending calls can be modified
-        const { data: existing, error: fetchError } = await supabase
+        const { data: existing, error: fetchError } = await db
             .from('scheduled_calls')
             .select('status')
             .eq('id', id)
+            .eq('user_id', req.user.id)
             .single();
 
         if (fetchError) {
@@ -216,10 +219,11 @@ router.patch('/calls/:id', async (req, res) => {
         if (assistantId !== undefined) updates.assistant_id = assistantId;
         if (maxRetries !== undefined) updates.max_retries = maxRetries;
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scheduled_calls')
             .update(updates)
             .eq('id', id)
+            .eq('user_id', req.user.id)
             .select()
             .single();
 
@@ -248,10 +252,11 @@ router.delete('/calls/:id', async (req, res) => {
         const { id } = req.params;
 
         // Check current status
-        const { data: existing, error: fetchError } = await supabase
+        const { data: existing, error: fetchError } = await db
             .from('scheduled_calls')
             .select('status')
             .eq('id', id)
+            .eq('user_id', req.user.id)
             .single();
 
         if (fetchError) {
@@ -269,10 +274,11 @@ router.delete('/calls/:id', async (req, res) => {
         }
 
         // Update status to cancelled (soft delete)
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scheduled_calls')
             .update({ status: 'cancelled' })
             .eq('id', id)
+            .eq('user_id', req.user.id)
             .select()
             .single();
 
@@ -305,7 +311,7 @@ router.get('/stats', async (req, res) => {
         }
 
         // Get counts by status
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scheduled_calls')
             .select('status')
             .eq('user_id', userId);
@@ -383,7 +389,7 @@ router.post('/calls/bulk', async (req, res) => {
             status: 'pending',
         }));
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('scheduled_calls')
             .insert(scheduledCalls)
             .select();

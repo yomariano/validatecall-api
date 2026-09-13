@@ -7,7 +7,7 @@
  */
 
 import { Resend } from 'resend';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { getUserResendApiKey } from './userSettings.js';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -27,10 +27,7 @@ async function getResendClientForUser(userId) {
     return { client: resend, isUserOwned: false };
 }
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 /**
  * Check if domain service is configured
@@ -88,7 +85,7 @@ export async function createDomain(userId, domainName) {
 
     try {
         // Check if domain already exists for this user
-        const { data: existing } = await supabase
+        const { data: existing } = await db
             .from('user_domains')
             .select('id, status')
             .eq('user_id', userId)
@@ -113,7 +110,7 @@ export async function createDomain(userId, domainName) {
         }
 
         // Store in database (map Resend status to our allowed values)
-        const { data: dbDomain, error: dbError } = await supabase
+        const { data: dbDomain, error: dbError } = await db
             .from('user_domains')
             .insert({
                 user_id: userId,
@@ -160,7 +157,7 @@ export async function createDomain(userId, domainName) {
  */
 export async function listDomains(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('user_domains')
             .select('*')
             .eq('user_id', userId)
@@ -196,7 +193,7 @@ export async function listDomains(userId) {
  */
 export async function getDomain(userId, domainId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('user_domains')
             .select('*')
             .eq('id', domainId)
@@ -240,7 +237,7 @@ export async function verifyDomain(userId, domainId) {
 
     try {
         // Get domain from database
-        const { data: dbDomain, error: dbError } = await supabase
+        const { data: dbDomain, error: dbError } = await db
             .from('user_domains')
             .select('*')
             .eq('id', domainId)
@@ -284,7 +281,7 @@ export async function verifyDomain(userId, domainId) {
             updateData.verified_at = new Date().toISOString();
         }
 
-        const { error: updateError } = await supabase
+        const { error: updateError } = await db
             .from('user_domains')
             .update(updateData)
             .eq('id', domainId);
@@ -318,7 +315,7 @@ export async function verifyDomain(userId, domainId) {
 export async function deleteDomain(userId, domainId) {
     try {
         // Get domain from database
-        const { data: dbDomain, error: dbError } = await supabase
+        const { data: dbDomain, error: dbError } = await db
             .from('user_domains')
             .select('*')
             .eq('id', domainId)
@@ -343,7 +340,7 @@ export async function deleteDomain(userId, domainId) {
         }
 
         // Delete from database
-        const { error: deleteError } = await supabase
+        const { error: deleteError } = await db
             .from('user_domains')
             .delete()
             .eq('id', domainId)
@@ -368,7 +365,7 @@ export async function deleteDomain(userId, domainId) {
  */
 export async function getVerifiedDomains(userId) {
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('user_domains')
             .select('id, domain_name')
             .eq('user_id', userId)
@@ -406,7 +403,7 @@ export async function isEmailDomainVerified(userId, email) {
     const domain = email.split('@')[1].toLowerCase();
 
     try {
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('user_domains')
             .select('id')
             .eq('user_id', userId)

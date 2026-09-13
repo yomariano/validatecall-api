@@ -9,7 +9,7 @@
  * - Unsubscribe link insertion
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { Resend } from 'resend';
 import crypto from 'crypto';
 import { generateColdEmailHtml } from './email.js';
@@ -19,10 +19,7 @@ import { getUserResendApiKey, getActiveEmailProvider } from './userSettings.js';
 const API_URL = process.env.API_URL || 'http://localhost:3002';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 /**
  * Generate a unique tracking ID
@@ -220,7 +217,7 @@ export async function sendSequenceEmail({
         }
 
         // Log the email with tracking info
-        const { data: emailLog, error: logError } = await supabase
+        const { data: emailLog, error: logError } = await db
             .from('email_logs')
             .insert({
                 user_id: userId,
@@ -257,7 +254,7 @@ export async function sendSequenceEmail({
         console.error('Failed to send sequence email:', error);
 
         // Log the failure
-        await supabase
+        await db
             .from('email_logs')
             .insert({
                 user_id: userId,
@@ -294,7 +291,7 @@ export async function recordTrackingEvent({
     userAgent = null,
 }) {
     // Get email log by tracking ID
-    const { data: emailLog } = await supabase
+    const { data: emailLog } = await db
         .from('email_logs')
         .select('id, user_id, enrollment_id, sequence_id, step_number')
         .eq('tracking_id', trackingId)
@@ -308,7 +305,7 @@ export async function recordTrackingEvent({
     // Get lead ID from enrollment
     let leadId = null;
     if (emailLog.enrollment_id) {
-        const { data: enrollment } = await supabase
+        const { data: enrollment } = await db
             .from('email_sequence_enrollments')
             .select('lead_id')
             .eq('id', emailLog.enrollment_id)
@@ -330,7 +327,7 @@ export async function recordTrackingEvent({
     }
 
     // Insert tracking event
-    const { data: event, error } = await supabase
+    const { data: event, error } = await db
         .from('email_tracking_events')
         .insert({
             email_log_id: emailLog.id,
@@ -355,11 +352,11 @@ export async function recordTrackingEvent({
     // Update email_logs with event timestamp and count
     const updates = {};
     if (eventType === 'open') {
-        updates.open_count = supabase.sql`COALESCE(open_count, 0) + 1`;
-        updates.opened_at = supabase.sql`COALESCE(opened_at, NOW())`;
+        updates.open_count = db.sql`COALESCE(open_count, 0) + 1`;
+        updates.opened_at = db.sql`COALESCE(opened_at, NOW())`;
     } else if (eventType === 'click') {
-        updates.click_count = supabase.sql`COALESCE(click_count, 0) + 1`;
-        updates.clicked_at = supabase.sql`COALESCE(clicked_at, NOW())`;
+        updates.click_count = db.sql`COALESCE(click_count, 0) + 1`;
+        updates.clicked_at = db.sql`COALESCE(clicked_at, NOW())`;
     } else if (eventType === 'delivered') {
         updates.delivered_at = new Date().toISOString();
     } else if (eventType === 'bounce') {
@@ -368,7 +365,7 @@ export async function recordTrackingEvent({
     }
 
     if (Object.keys(updates).length > 0) {
-        await supabase
+        await db
             .from('email_logs')
             .update(updates)
             .eq('id', emailLog.id);
@@ -378,13 +375,13 @@ export async function recordTrackingEvent({
     if (emailLog.enrollment_id) {
         const enrollmentUpdates = {};
         if (eventType === 'open') {
-            enrollmentUpdates.opens = supabase.sql`COALESCE(opens, 0) + 1`;
+            enrollmentUpdates.opens = db.sql`COALESCE(opens, 0) + 1`;
         } else if (eventType === 'click') {
-            enrollmentUpdates.clicks = supabase.sql`COALESCE(clicks, 0) + 1`;
+            enrollmentUpdates.clicks = db.sql`COALESCE(clicks, 0) + 1`;
         }
 
         if (Object.keys(enrollmentUpdates).length > 0) {
-            await supabase
+            await db
                 .from('email_sequence_enrollments')
                 .update(enrollmentUpdates)
                 .eq('id', emailLog.enrollment_id);
@@ -399,15 +396,15 @@ export async function recordTrackingEvent({
             : null;
 
         if (sequenceField) {
-            await supabase.rpc('increment_sequence_stats', {
+            await db.rpc('increment_sequence_stats', {
                 p_sequence_id: emailLog.sequence_id,
                 p_stat_name: sequenceField,
                 p_increment: 1
             }).catch(() => {
                 // Fallback
-                supabase
+                db
                     .from('email_sequences')
-                    .update({ [sequenceField]: supabase.sql`COALESCE(${sequenceField}, 0) + 1` })
+                    .update({ [sequenceField]: db.sql`COALESCE(${sequenceField}, 0) + 1` })
                     .eq('id', emailLog.sequence_id);
             });
         }
@@ -420,16 +417,16 @@ export async function recordTrackingEvent({
                 : null;
 
             if (stepField) {
-                await supabase.rpc('increment_step_stats', {
+                await db.rpc('increment_step_stats', {
                     p_sequence_id: emailLog.sequence_id,
                     p_step_number: emailLog.step_number,
                     p_stat_name: stepField,
                     p_increment: 1
                 }).catch(() => {
                     // Fallback
-                    supabase
+                    db
                         .from('email_sequence_steps')
-                        .update({ [stepField]: supabase.sql`COALESCE(${stepField}, 0) + 1` })
+                        .update({ [stepField]: db.sql`COALESCE(${stepField}, 0) + 1` })
                         .eq('sequence_id', emailLog.sequence_id)
                         .eq('step_number', emailLog.step_number);
                 });
@@ -441,17 +438,17 @@ export async function recordTrackingEvent({
     if (leadId) {
         const leadUpdates = {};
         if (eventType === 'open') {
-            leadUpdates.total_opens = supabase.sql`COALESCE(total_opens, 0) + 1`;
+            leadUpdates.total_opens = db.sql`COALESCE(total_opens, 0) + 1`;
             leadUpdates.last_opened_at = new Date().toISOString();
             leadUpdates.email_status = 'engaged';
         } else if (eventType === 'click') {
-            leadUpdates.total_clicks = supabase.sql`COALESCE(total_clicks, 0) + 1`;
+            leadUpdates.total_clicks = db.sql`COALESCE(total_clicks, 0) + 1`;
             leadUpdates.last_clicked_at = new Date().toISOString();
             leadUpdates.email_status = 'engaged';
         }
 
         if (Object.keys(leadUpdates).length > 0) {
-            await supabase
+            await db
                 .from('leads')
                 .update(leadUpdates)
                 .eq('id', leadId);
@@ -469,7 +466,7 @@ export async function recordTrackingEvent({
  */
 export async function processUnsubscribe(trackingId, email, reason = 'link') {
     // Get user ID from tracking ID
-    const { data: emailLog } = await supabase
+    const { data: emailLog } = await db
         .from('email_logs')
         .select('user_id, enrollment_id')
         .eq('tracking_id', trackingId)
@@ -481,7 +478,7 @@ export async function processUnsubscribe(trackingId, email, reason = 'link') {
     }
 
     // Add to unsubscribe list
-    await supabase
+    await db
         .from('email_unsubscribes')
         .upsert({
             user_id: emailLog.user_id,
@@ -494,7 +491,7 @@ export async function processUnsubscribe(trackingId, email, reason = 'link') {
 
     // Stop any active enrollments for this email
     if (emailLog.enrollment_id) {
-        await supabase
+        await db
             .from('email_sequence_enrollments')
             .update({
                 status: 'stopped_unsubscribe',

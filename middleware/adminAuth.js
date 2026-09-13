@@ -3,12 +3,9 @@
  * Protects admin-only routes
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 // List of admin emails (backup if DB flag not set)
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').filter(Boolean);
@@ -20,14 +17,14 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').filter(Boolean)
 export async function requireAdmin(req, res, next) {
     try {
         // Get user ID from various sources
-        const userId = req.body?.adminUserId || req.query?.adminUserId || req.headers['x-admin-user-id'];
+        const userId = req.user?.id;
 
         if (!userId) {
             return res.status(401).json({ error: 'Admin user ID required' });
         }
 
         // Fetch user profile
-        const { data: profile, error } = await supabase
+        const { data: profile, error } = await db
             .from('profiles')
             .select('id, email, is_admin')
             .eq('id', userId)
@@ -60,7 +57,7 @@ export async function isAdmin(userId) {
     if (!userId) return false;
 
     try {
-        const { data: profile } = await supabase
+        const { data: profile } = await db
             .from('profiles')
             .select('email, is_admin')
             .eq('id', userId)

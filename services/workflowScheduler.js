@@ -1,3 +1,5 @@
+import { recordVapiCallOwner } from './vapiOwnership.js';
+import { runClaimedJob } from './jobClaims.js';
 /**
  * Multi-Channel Workflow Scheduler
  * Handles unified outreach workflows with email + voice calls
@@ -7,21 +9,17 @@
  */
 
 import cron from 'node-cron';
-import { createClient } from '@supabase/supabase-js';
+import { createDatabase } from '../db/database.js';
 import { sendSequenceEmail } from './emailTracking.js';
 import { generatePersonalizedContent } from './emailPersonalization.js';
 
 const POLL_BATCH_SIZE = 50;
-const RETRY_DELAY_MINUTES = 5;
 
 // Clean environment variables
 const cleanEnvVar = (val) => val?.replace(/["';]/g, '').trim();
 const vapiApiKey = cleanEnvVar(process.env.VAPI_API_KEY);
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const db = createDatabase();
 
 /**
  * WorkflowScheduler - Manages multi-channel outreach workflows
@@ -69,7 +67,8 @@ class WorkflowScheduler {
             console.log(`🔄 Processing ${dueEnrollments.length} due workflow action(s)`);
 
             for (const enrollment of dueEnrollments) {
-                await this.processEnrollment(enrollment);
+                const key = `workflow:${enrollment.id}:${enrollment.current_step}:${enrollment.next_action_at}`;
+                await runClaimedJob(db, key, () => this.processEnrollment(enrollment));
             }
 
         } catch (error) {
@@ -85,7 +84,7 @@ class WorkflowScheduler {
     async getDueEnrollments() {
         const now = new Date();
 
-        const { data, error } = await supabase
+        const { data, error } = await db
             .from('workflow_enrollments')
             .select(`
                 *,
@@ -163,7 +162,7 @@ class WorkflowScheduler {
 
         // Get next step
         const nextStepNumber = current_step + 1;
-        const { data: step, error: stepError } = await supabase
+        const { data: step, error: stepError } = await db
             .from('workflow_steps')
             .select('*')
             .eq('workflow_id', workflow.id)
@@ -212,12 +211,14 @@ class WorkflowScheduler {
                 console.log(`✅ Executed ${step.step_type} step ${nextStepNumber} for ${lead.email}`);
             } else {
                 console.error(`Failed ${step.step_type} for ${lead.email}:`, result.error);
-                await this.scheduleRetry(enrollmentId);
+                await this.pauseForReview(enrollmentId);
+                throw new Error('Outbound delivery needs review before resuming');
             }
 
         } catch (error) {
             console.error(`Error processing enrollment ${enrollmentId}:`, error.message);
-            await this.scheduleRetry(enrollmentId);
+            await this.pauseForReview(enrollmentId);
+            throw error;
         }
     }
 
@@ -233,7 +234,7 @@ class WorkflowScheduler {
 
             case 'no_reply':
                 // Check if lead has replied
-                const { data: replies } = await supabase
+                const { data: replies } = await db
                     .from('email_responses')
                     .select('id')
                     .eq('lead_id', enrollment.lead_id)
@@ -247,7 +248,7 @@ class WorkflowScheduler {
 
             case 'no_answer':
                 // Check if any call was answered
-                const { data: answeredCalls } = await supabase
+                const { data: answeredCalls } = await db
                     .from('workflow_action_log')
                     .select('id')
                     .eq('enrollment_id', enrollment.id)
@@ -270,14 +271,14 @@ class WorkflowScheduler {
         let personalizedData = personalized_data || {};
         if (Object.keys(personalizedData).length === 0) {
             personalizedData = await generatePersonalizedContent(lead, workflow, user_id);
-            await supabase
+            await db
                 .from('workflow_enrollments')
                 .update({ personalized_data: personalizedData })
                 .eq('id', enrollmentId);
         }
 
         // Get sender info
-        const { data: profile } = await supabase
+        const { data: profile } = await db
             .from('profiles')
             .select('email, full_name')
             .eq('id', user_id)
@@ -287,7 +288,7 @@ class WorkflowScheduler {
         let senderName = null;
 
         if (workflow.campaign_id) {
-            const { data: campaign } = await supabase
+            const { data: campaign } = await db
                 .from('campaigns')
                 .select('sender_email, sender_name')
                 .eq('id', workflow.campaign_id)
@@ -352,7 +353,7 @@ class WorkflowScheduler {
         let companyContext = '';
 
         if (workflow.campaign_id) {
-            const { data: campaign } = await supabase
+            const { data: campaign } = await db
                 .from('campaigns')
                 .select('product_idea, company_context')
                 .eq('id', workflow.campaign_id)
@@ -422,9 +423,10 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
             }
 
             const callData = await response.json();
+            await recordVapiCallOwner(db, callData.id, user_id);
 
             // Log the call initiation
-            await supabase.from('calls').insert({
+            await db.from('calls').insert({
                 user_id,
                 lead_id: lead.id,
                 campaign_id: workflow.campaign_id,
@@ -514,7 +516,7 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
      */
     async advanceToNextStep(enrollmentId, workflow, currentStepNumber) {
         // Get next step
-        const { data: nextStep } = await supabase
+        const { data: nextStep } = await db
             .from('workflow_steps')
             .select('*')
             .eq('workflow_id', workflow.id)
@@ -533,7 +535,7 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
             nextActionType = nextStep.step_type;
         }
 
-        await supabase
+        await db
             .from('workflow_enrollments')
             .update({
                 current_step: currentStepNumber,
@@ -553,7 +555,7 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
      * Complete enrollment
      */
     async completeEnrollment(enrollmentId, workflowId) {
-        await supabase
+        await db
             .from('workflow_enrollments')
             .update({
                 status: 'completed',
@@ -570,7 +572,7 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
      * Stop enrollment
      */
     async stopEnrollment(enrollmentId, status, reason) {
-        await supabase
+        await db
             .from('workflow_enrollments')
             .update({
                 status: `stopped_${status}`,
@@ -586,26 +588,22 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
     }
 
     /**
-     * Schedule retry
+     * Pause for review
      */
-    async scheduleRetry(enrollmentId) {
-        const nextRetry = new Date();
-        nextRetry.setMinutes(nextRetry.getMinutes() + RETRY_DELAY_MINUTES);
-
-        await supabase
-            .from('workflow_enrollments')
-            .update({
-                next_action_at: nextRetry.toISOString(),
-                updated_at: new Date().toISOString(),
-            })
-            .eq('id', enrollmentId);
+    async pauseForReview(enrollmentId) {
+        const { error } = await db.from('workflow_enrollments').update({
+            status: 'paused', next_action_at: null,
+            stopped_reason: 'Delivery uncertain or failed. Check the provider before resuming.',
+            stopped_at: new Date().toISOString(),
+        }).eq('id', enrollmentId);
+        if (error) throw error;
     }
 
     /**
      * Log action
      */
     async logAction(enrollment, step, result) {
-        await supabase.from('workflow_action_log').insert({
+        await db.from('workflow_action_log').insert({
             workflow_id: enrollment.workflow.id,
             enrollment_id: enrollment.id,
             step_id: step.id,
@@ -631,27 +629,27 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
         // Workflow stats
         const workflowStats = {};
         if (step.step_type === 'email' && result.success) {
-            workflowStats.total_emails_sent = supabase.sql`total_emails_sent + 1`;
+            workflowStats.total_emails_sent = db.sql`total_emails_sent + 1`;
         } else if (step.step_type === 'call' && result.success) {
-            workflowStats.total_calls_made = supabase.sql`total_calls_made + 1`;
+            workflowStats.total_calls_made = db.sql`total_calls_made + 1`;
         }
 
         if (Object.keys(workflowStats).length > 0) {
-            await supabase
+            await db
                 .from('outreach_workflows')
                 .update({ ...workflowStats, updated_at: new Date().toISOString() })
                 .eq('id', workflowId);
         }
 
         // Step stats
-        const stepStats = { executed: supabase.sql`executed + 1` };
+        const stepStats = { executed: db.sql`executed + 1` };
         if (step.step_type === 'email' && result.success) {
-            stepStats.emails_sent = supabase.sql`emails_sent + 1`;
+            stepStats.emails_sent = db.sql`emails_sent + 1`;
         } else if (step.step_type === 'call' && result.success) {
-            stepStats.calls_made = supabase.sql`calls_made + 1`;
+            stepStats.calls_made = db.sql`calls_made + 1`;
         }
 
-        await supabase
+        await db
             .from('workflow_steps')
             .update(stepStats)
             .eq('id', step.id);
@@ -661,7 +659,7 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
      * Check if email is unsubscribed
      */
     async isEmailUnsubscribed(userId, email) {
-        const { data } = await supabase
+        const { data } = await db
             .from('email_unsubscribes')
             .select('id')
             .eq('user_id', userId)
@@ -675,7 +673,7 @@ ${personalizedData.painPoint ? `Pain point to address: ${personalizedData.painPo
      * Handle stop conditions from external events
      */
     async handleStopCondition(enrollmentId, eventType) {
-        const { data: enrollment } = await supabase
+        const { data: enrollment } = await db
             .from('workflow_enrollments')
             .select(`
                 *,
