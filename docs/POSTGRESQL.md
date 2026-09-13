@@ -78,3 +78,10 @@ local record and advance the enrollment instead of sending again. If definitivel
 resume the enrollment after review; only release an old claim if intentionally retrying that
 same action. These claims prevent competing workers, but cannot make an external provider and
 PostgreSQL one atomic transaction.
+
+## Container deployment
+
+Use the repository Dockerfile in Coolify with port 3002 and health path `/health/ready`.
+It pins Node 22, installs production dependencies, and applies migrations before starting
+Express. The frontend repository has a separate multistage Dockerfile serving its build
+through Nginx with SPA route fallback. Provider keys are API runtime variables only.

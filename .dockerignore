@@ -1,0 +1,14 @@
+node_modules
+.git
+.env
+.env.*
+coverage
+logs
+*.log
+backups
+*.dump
+supabase
+e2e-tests
+tests
+config/*.test.js
+docs
