@@ -94,3 +94,30 @@ test('assistant list preserves the array contract used by campaign and lead sele
  const response=await auth(request(app).get('/api/voice/assistants')).expect(200);
  expect(response.body).toEqual([]);
 });
+test('GPT Live creation preserves Luna low and rejects unsupported settings before reaching the provider',async()=>{
+ process.env.ASSISTANTFLEET_API_KEY='test-af';
+ const live_settings={backend_model:'gpt-5.6-luna',reasoning_effort:'low'};
+ global.fetch=jest.fn(async(url,options)=>({ok:true,status:201,json:async()=>({id:'live-qa',...JSON.parse(options.body)})}));
+ const result=await auth(request(app).post('/api/voice/assistants')).send({name:'Luna test',model:'gpt-live-1',voice:'marin',live_settings}).expect(201);
+ expect(result.body.live_settings).toEqual(live_settings);
+ expect(JSON.parse(global.fetch.mock.calls[0][1].body).live_settings).toEqual(live_settings);
+ global.fetch.mockClear();
+ await auth(request(app).post('/api/voice/assistants')).send({name:'Bad model',live_settings:{backend_model:'unknown'}}).expect(400);
+ expect(global.fetch).not.toHaveBeenCalled();
+});
+test('campaign snapshots retain GPT Live delegated reasoning settings',async()=>{
+ process.env.ASSISTANTFLEET_API_KEY='test-af';process.env.VOICE_OUTBOUND_ENABLED='true';
+ await number('IE','+35312345678');
+ await db.query("INSERT INTO vapi_assistants(id,user_id,provider) VALUES('snapshot-source',$1,'assistantfleet')",[user]);
+ const live_settings={backend_model:'gpt-5.6-luna',reasoning_effort:'low'};
+ global.fetch=jest.fn(async(url,options)=>{
+  const path=new URL(url).pathname;
+  const ok=data=>({ok:true,status:200,json:async()=>data});
+  if(path==='/assistants/snapshot-source')return ok({id:'snapshot-source',name:'Luna',model:'gpt-live-1',voice:'marin',live_settings});
+  if(path==='/numbers')return ok([{phone_number:'35312345678',provider:'telnyx'}]);
+  if(path==='/assistants'){expect(JSON.parse(options.body).live_settings).toEqual(live_settings);return ok({id:'snapshot-live',...JSON.parse(options.body)});}
+  if(path==='/calls/outbound'){expect(JSON.parse(options.body).assistant_id).toBe('snapshot-live');return ok({call_sid:'snapshot-call'});}
+  throw new Error('Unexpected path');
+ });
+ await dispatchFleetCall(user,{phoneNumber:'+353838454183',assistantId:'snapshot-source',productIdea:'Test campaign'});
+});

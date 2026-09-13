@@ -20,11 +20,23 @@ export async function ownedAssistant(userId, id) {
     if (!rows.length) throw Object.assign(new Error('Assistant not found'), { status: 404 });
     return fleetRequest(`/assistants/${encodeURIComponent(id)}`);
 }
-const fields = ['name','instructions','first_message','model','voice','language','realtime_provider','voicemail_action','end_call_enabled'];
+const fields = ['name','instructions','first_message','model','voice','language','realtime_provider','voicemail_action','end_call_enabled','live_settings'];
 export function assistantInput(body) {
     const input = Object.fromEntries(fields.filter(key => body[key] !== undefined).map(key => [key, body[key]]));
     if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 120) throw Object.assign(new Error('Give the voice agent a name (up to 120 characters).'), { status: 400 });
     if (input.instructions != null && (typeof input.instructions !== 'string' || input.instructions.length > 30000)) throw Object.assign(new Error('Instructions must be text, up to 30,000 characters.'), { status: 400 });
+    if (input.live_settings != null) {
+        const settings = input.live_settings;
+        const fail = message => { throw Object.assign(new Error(message), { status: 400 }); };
+        if (typeof settings !== 'object' || Array.isArray(settings)) fail('Live settings must be an object.');
+        const allowed = ['backend_model','reasoning_effort','service_tier','max_output_tokens','voice_instructions','accent_instructions'];
+        if (Object.keys(settings).some(key => !allowed.includes(key))) fail('Unknown Live setting.');
+        for (const [key, values] of Object.entries({ backend_model:['gpt-5.6-luna','gpt-5.6-terra','gpt-5.6-sol'], reasoning_effort:['none','low','medium','high','xhigh','max'], service_tier:['default','fast'] })) {
+            if (settings[key] !== undefined && !values.includes(settings[key])) fail(`Invalid Live ${key}.`);
+        }
+        if (settings.max_output_tokens !== undefined && (!Number.isInteger(settings.max_output_tokens) || settings.max_output_tokens < 1024 || settings.max_output_tokens > 32768)) fail('Live output tokens must be between 1024 and 32768.');
+        for (const key of ['voice_instructions','accent_instructions']) if (settings[key] !== undefined && (typeof settings[key] !== 'string' || settings[key].length > 2000)) fail(`Invalid Live ${key}.`);
+    }
     return input;
 }
 export async function createAssistant(userId, body) {
