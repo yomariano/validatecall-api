@@ -106,3 +106,12 @@ test('provider failure ends the job without any website visits', async () => {
     expect(browse).not.toHaveBeenCalled();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
+test('truncated navigation prose does not discard already-read evidence or execute partial tools', async () => {
+    const fetchImpl = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ finish_reason: 'length', message: open(['https://other.example.com']) }] })))
+        .mockResolvedValueOnce(reply({ content: JSON.stringify({ findings: [{ text: 'Observed detail', sourceUrls: [source.url] }] }) }));
+    const browse = jest.fn(async () => source);
+    const result = await researchWeb({ keyword: 'dentists', location: 'Dublin', startingUrls: [source.url] }, { env, browse, fetchImpl, mode: 'industry' });
+    expect(result.findings).toHaveLength(1);
+    expect(browse).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+});
