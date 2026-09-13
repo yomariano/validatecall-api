@@ -11,7 +11,7 @@ router.post('/webhook', (req,res) => res.status(503).json({ error:'Legacy voice 
 router.get('/assistants', handler(async (req,res) => {
     const { rows } = await db.query("SELECT id FROM vapi_assistants WHERE user_id=$1 AND provider='assistantfleet' ORDER BY created_at DESC", [req.user.id]);
     const assistants = await Promise.all(rows.map(row => ownedAssistant(req.user.id,row.id)));
-    res.json({ assistants });
+    res.json(assistants);
 }));
 router.post('/assistants', handler(async (req,res) => res.status(201).json(await createAssistant(req.user.id,req.body))));
 router.get('/assistants/:id', handler(async (req,res) => res.json(await ownedAssistant(req.user.id,req.params.id))));
@@ -55,7 +55,7 @@ router.post(['/calls/batch','/user/:userId/calls/batch'], handler(async (req,res
 }));
 router.get('/calls', handler(async (req,res) => {
     const { data,error } = await db.forUser(req.user.id).from('calls').select('*').order('created_at',{ascending:false}).limit(Math.min(100,Number(req.query.limit)||100));
-    if(error) throw error; res.json({calls:data});
+    if(error) throw error; res.json(data);
 }));
 router.get('/calls/:id', handler(async (req,res) => {
     const { data } = await db.forUser(req.user.id).from('calls').select('*').eq('vapi_call_id',req.params.id).maybeSingle();

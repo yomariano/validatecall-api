@@ -89,3 +89,8 @@ test('signed call result updates only a locally-owned dispatch and duplicate del
  expect((await db.query("SELECT status FROM calls WHERE vapi_call_id='qa-dial'")).rows[0].status).toBe('completed');
  delete process.env.ASSISTANTFLEET_WEBHOOK_SECRET;
 });
+test('assistant list preserves the array contract used by campaign and lead selectors',async()=>{
+ await db.query("DELETE FROM vapi_assistants WHERE user_id=$1",[user]);
+ const response=await auth(request(app).get('/api/voice/assistants')).expect(200);
+ expect(response.body).toEqual([]);
+});
