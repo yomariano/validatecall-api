@@ -28,11 +28,19 @@ See [PostgreSQL and deployment notes](docs/POSTGRESQL.md) before replacing an ex
 
 ## Optional providers
 
-- Research: `BRAVE_SEARCH_API_KEY` and `DEEPINFRA_API_KEY`. Each request makes two searches
-  and at most one model call. `DEEPINFRA_RESEARCH_MODEL` defaults to
-  `deepseek-ai/DeepSeek-V4.1-Flash`; set a supported DeepInfra model ID to change it.
-  Search results are evidence for extraction, not instructions. Source links accompany results;
-  missing contact details stay empty. CSV import works without either key.
+- Research: only `DEEPINFRA_API_KEY` is required. The model selects public websites and follows
+  links through a text browser; there is no paid search API or complete search index.
+  Supply up to three `startingUrls` for more targeted discovery. Otherwise the model proposes
+  candidate sites, which must be fetched before their contents can support a result.
+  Each job is capped at six page attempts, three navigation calls plus one extraction call,
+  5,100 output tokens and 150 seconds. Two jobs can run concurrently; database daily quotas apply.
+  `DEEPINFRA_RESEARCH_MODEL` defaults to `deepseek-ai/DeepSeek-V4.1-Flash`; `zai-org/GLM-5.3`
+  is also configurable, with different inference pricing. Reasoning is disabled for these tasks.
+  The crawler checks robots.txt, blocks private/reserved networks and rechecks redirects, pins DNS,
+  caps page bytes and skips verification gates. It cannot render JavaScript-only pages.
+  Only visited evidence can support extracted contacts, and missing fields remain empty.
+  A source link is evidence of a published value, not proof that it is current or correct.
+  CSV import works without the model key. Browser code and tests: `services/publicWeb.js`.
 - Voice: Vapi credentials and phone number, plus `VAPI_WEBHOOK_SECRET` configured as the
   provider's `x-vapi-secret` webhook header.
 - Email: Resend credentials and `RESEND_WEBHOOK_SECRET` for signed events. The inbound email

@@ -14,14 +14,17 @@
   },
   "dependencies": {
     "@sendgrid/mail": "^8.1.6",
+    "cheerio": "^1.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "google-auth-library": "^11.0.2",
+    "ipaddr.js": "^2.3.0",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",
     "pg": "^8.23.0",
     "resend": "^6.7.0",
+    "robots-parser": "^3.0.1",
     "stripe": "^20.1.2"
   },
   "devDependencies": {
