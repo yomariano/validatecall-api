@@ -13,6 +13,18 @@ afterAll(async()=>{await pg.close();});
 beforeEach(async()=>{await db.query('DELETE FROM user_phone_numbers');delete process.env.VOICE_OUTBOUND_ENABLED;delete process.env.ASSISTANTFLEET_API_KEY;global.fetch=jest.fn(()=>{throw new Error('Unexpected external request');});});
 afterEach(()=>{global.fetch=originalFetch;});
 const auth=req=>req.set('Cookie',`${SESSION_COOKIE}=${session.token}`).set('X-CSRF-Token',session.csrfToken);
+test('call details accept local and encoded provider IDs while enforcing ownership',async()=>{
+ const id='33333333-3333-4333-8333-333333333333', providerId='v3:history/provider+id';
+ const transcript=[{role:'user',text:'Tuesday at ten suits me.'}];
+ await db.query('INSERT INTO calls(id,user_id,vapi_call_id,phone_number,customer_name,duration_seconds,transcript_json) VALUES($1,$2,$3,$4,$5,$6,$7)',[id,user,providerId,'+35312345678','Example Electrical',22,JSON.stringify(transcript)]);
+ for(const lookup of [id,providerId]) {
+  const response=await auth(request(app).get(`/api/voice/calls/${encodeURIComponent(lookup)}`)).expect(200);
+  expect(response.body).toMatchObject({id,customer_name:'Example Electrical',duration_seconds:22,transcript_json:transcript});
+ }
+ await db.query('UPDATE calls SET user_id=$1 WHERE id=$2',[other,id]);
+ for(const lookup of [id,providerId,'missing-call']) await auth(request(app).get(`/api/voice/calls/${encodeURIComponent(lookup)}`)).expect(404);
+ expect(global.fetch).not.toHaveBeenCalled();
+});
 async function number(country,phone,extra={}) {
  const result=await db.from('user_phone_numbers').insert({user_id:user,phone_number:phone,phone_number_id:phone,provider:'telnyx',voice_provider:'assistantfleet',country_code:country,...extra}).select().single();
  if(result.error)throw new Error(result.error.message);return result.data;
@@ -105,17 +117,26 @@ test('GPT Live creation preserves Luna low and rejects unsupported settings befo
  await auth(request(app).post('/api/voice/assistants')).send({name:'Bad model',live_settings:{backend_model:'unknown'}}).expect(400);
  expect(global.fetch).not.toHaveBeenCalled();
 });
-test('campaign snapshots retain GPT Live delegated reasoning settings',async()=>{
+test('campaign snapshots retain delegated reasoning and the complete voicemail message',async()=>{
  process.env.ASSISTANTFLEET_API_KEY='test-af';process.env.VOICE_OUTBOUND_ENABLED='true';
  await number('IE','+35312345678');
  await db.query("INSERT INTO vapi_assistants(id,user_id,provider) VALUES('snapshot-source',$1,'assistantfleet')",[user]);
  const live_settings={backend_model:'gpt-5.6-luna',reasoning_effort:'low'};
+ const voicemail_message='For a demo call 083 845 4183, visit voicefleet.ai, or email mariano@voicefleet.ai.';
  global.fetch=jest.fn(async(url,options)=>{
   const path=new URL(url).pathname;
   const ok=data=>({ok:true,status:200,json:async()=>data});
-  if(path==='/assistants/snapshot-source')return ok({id:'snapshot-source',name:'Luna',model:'gpt-live-1',voice:'marin',live_settings});
+  if(path==='/assistants/snapshot-source')return ok({id:'snapshot-source',name:'Luna',model:'gpt-live-1',voice:'marin',live_settings,voicemail_action:'leave_message',voicemail_message,turn_detection:'semantic_vad',turn_eagerness:'low'});
   if(path==='/numbers')return ok([{phone_number:'35312345678',provider:'telnyx'}]);
-  if(path==='/assistants'){expect(JSON.parse(options.body).live_settings).toEqual(live_settings);return ok({id:'snapshot-live',...JSON.parse(options.body)});}
+  if(path==='/assistants'){
+   const snapshot=JSON.parse(options.body);
+   expect(snapshot.live_settings).toEqual(live_settings);
+   expect(snapshot.voicemail_action).toBe('leave_message');
+   expect(snapshot.voicemail_message).toBe(voicemail_message);
+   expect(snapshot.turn_detection).toBe('semantic_vad');
+   expect(snapshot.turn_eagerness).toBe('low');
+   return ok({id:'snapshot-live',...snapshot});
+  }
   if(path==='/calls/outbound'){expect(JSON.parse(options.body).assistant_id).toBe('snapshot-live');return ok({call_sid:'snapshot-call'});}
   throw new Error('Unexpected path');
  });

@@ -58,7 +58,8 @@ router.get('/calls', handler(async (req,res) => {
     if(error) throw error; res.json(data);
 }));
 router.get('/calls/:id', handler(async (req,res) => {
-    const { data } = await db.forUser(req.user.id).from('calls').select('*').eq('vapi_call_id',req.params.id).maybeSingle();
+    const { rows } = await db.query('SELECT * FROM calls WHERE user_id=$1 AND (id::text=$2 OR vapi_call_id=$2) LIMIT 1', [req.user.id,req.params.id]);
+    const data = rows[0];
     if(!data) return res.status(404).json({error:'Call not found'}); res.json(data);
 }));
 router.post('/parse-phones',(req,res)=>res.json(String(req.body.input||'').split(/[\n,]+/).flatMap(value=>{

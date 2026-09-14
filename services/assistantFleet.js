@@ -20,7 +20,7 @@ export async function ownedAssistant(userId, id) {
     if (!rows.length) throw Object.assign(new Error('Assistant not found'), { status: 404 });
     return fleetRequest(`/assistants/${encodeURIComponent(id)}`);
 }
-const fields = ['name','instructions','first_message','model','voice','language','realtime_provider','voicemail_action','end_call_enabled','live_settings'];
+const fields = ['name','instructions','first_message','model','voice','language','realtime_provider','voicemail_action','voicemail_message','turn_detection','turn_eagerness','end_call_enabled','live_settings'];
 export function assistantInput(body) {
     const input = Object.fromEntries(fields.filter(key => body[key] !== undefined).map(key => [key, body[key]]));
     if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 120) throw Object.assign(new Error('Give the voice agent a name (up to 120 characters).'), { status: 400 });
