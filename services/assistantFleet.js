@@ -3,16 +3,20 @@ import { selectOutboundNumber, PhoneRoutingError } from './phoneRouting.js';
 
 export const fleetConfigured = () => !!process.env.ASSISTANTFLEET_API_KEY;
 export const outboundEnabled = () => process.env.VOICE_OUTBOUND_ENABLED === 'true';
-export async function fleetRequest(path, options = {}) {
+export async function fleetResponse(path, options = {}) {
     if (!fleetConfigured()) throw Object.assign(new Error('AssistantFleet is not configured.'), { status: 503 });
     const base = new URL(process.env.ASSISTANTFLEET_API_URL || 'https://assistant.voicefleet.ai');
     if (base.protocol !== 'https:' || base.username || base.password) throw new Error('AssistantFleet requires an HTTPS base URL.');
     const response = await fetch(new URL(path, base), { ...options, redirect: 'error', signal: AbortSignal.timeout(30000),
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.ASSISTANTFLEET_API_KEY}` } });
+        headers: { 'Content-Type': 'application/json', ...options.headers, Authorization: `Bearer ${process.env.ASSISTANTFLEET_API_KEY}` } });
     if (!response.ok) {
         // Provider error payloads can include credentials/request details. Keep them server-side.
         throw Object.assign(new Error(`AssistantFleet request failed (${response.status}).`), { status: response.status >= 500 ? 502 : response.status });
     }
+    return response;
+}
+export async function fleetRequest(path, options = {}) {
+    const response = await fleetResponse(path, options);
     return response.status === 204 ? null : response.json();
 }
 export async function ownedAssistant(userId, id) {

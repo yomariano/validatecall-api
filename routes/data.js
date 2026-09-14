@@ -643,6 +643,10 @@ router.patch('/calls/:id', async (req, res) => {
             return res.status(400).json({ error: 'Database not configured' });
         }
 
+        // Provider identity and recording references are written only by dispatch
+        // and authenticated webhooks, never by browser-supplied call updates.
+        const allowed = ['lead_id','campaign_id','customer_name','call_outcome'];
+        if (Object.keys(req.body).some(key => !allowed.includes(key))) return res.status(400).json({error:'Unsupported call update field.'});
         const { data, error } = await db
             .from('calls')
             .update(req.body)
