@@ -59,7 +59,8 @@ export async function callerNumberOptions(db, userId, value) {
             : number.country_code !== destination.country ? 'COUNTRY_MISMATCH'
             : !remainingToday ? 'DAILY_LIMIT_REACHED' : null;
         return { id:number.id, phoneNumber:number.phone_number, country:number.country_code,
-            remainingToday, available:!unavailableReason, unavailableReason };
+            remainingToday, unlimitedDailyCalls:number.daily_calls_limit === 2147483647,
+            available:!unavailableReason, unavailableReason };
     });
     return { destination, numbers, recommendedNumberId:numbers.find(number => number.available)?.id || null };
 }
