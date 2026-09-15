@@ -121,7 +121,7 @@ class CallScheduler {
      * Execute a scheduled call
      */
     async executeScheduledCall(scheduledCall) {
-        const { id, user_id, phone_number, customer_name, product_idea, company_context, assistant_id, lead_id } = scheduledCall;
+        const { id, user_id, phone_number, customer_name, product_idea, company_context, assistant_id, lead_id, from_number_id } = scheduledCall;
 
         console.log(`📞 Executing scheduled call ${id} to ${phone_number}`);
 
@@ -130,7 +130,7 @@ class CallScheduler {
 
         try {
             const result = await dispatchFleetCall(user_id, { phoneNumber:phone_number, customerName:customer_name,
-                productIdea:product_idea, companyContext:company_context, assistantId:assistant_id });
+                productIdea:product_idea, companyContext:company_context, assistantId:assistant_id, fromNumberId:from_number_id });
             const { data: call } = await db.from('calls').select('id').eq('vapi_call_id',result.id).eq('user_id',user_id).single();
             if (call && lead_id) await db.from('calls').update({lead_id}).eq('id',call.id).eq('user_id',user_id);
             await this.updateStatus(id,'completed',{call_id:call?.id,vapi_call_id:result.id,completed_at:new Date().toISOString()});

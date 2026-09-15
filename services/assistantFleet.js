@@ -53,9 +53,9 @@ export async function createAssistant(userId, body) {
     return created;
 }
 
-export async function dispatchFleetCall(userId, { phoneNumber, customerName, assistantId, productIdea, companyContext }) {
+export async function dispatchFleetCall(userId, { phoneNumber, customerName, assistantId, productIdea, companyContext, fromNumberId }) {
     // Always enforce the local dedicated-number registry before touching any carrier.
-    const route = await selectOutboundNumber(db, userId, phoneNumber);
+    const route = await selectOutboundNumber(db, userId, phoneNumber, fromNumberId);
     if (!outboundEnabled()) throw new PhoneRoutingError('Outbound calling is disabled until dedicated ValidateCall numbers are configured.', 'OUTBOUND_DISABLED');
     if (!assistantId) throw Object.assign(new Error('Choose an AssistantFleet voice agent before calling.'), { status: 400 });
     const assistant = await ownedAssistant(userId, assistantId);

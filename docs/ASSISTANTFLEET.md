@@ -27,4 +27,10 @@ For additional dedicated numbers explicitly authorized in the future:
 
 Routing uses the actual destination country (including US/Canada sharing +1), rejects ambiguous numbers and extensions, excludes other users, flags, legacy providers and depleted numbers, and never falls back to a foreign or shared demo number. Campaign readiness simulates remaining batch capacity without placing calls or charging quota. The outbound switch defaults to off and is checked by immediate, batch, scheduled and workflow dispatch.
 
+## Selecting a caller number for a contact
+
+The contact call panel and telephone test forms offer a **From number** selector. `GET /api/telephony/caller-numbers?phoneNumber=...` lists only the signed-in user's active Telnyx/AssistantFleet numbers, with destination eligibility and remaining daily capacity. No provider request or usage reservation happens when listing numbers.
+
+Single-call requests accept `fromNumberId`, the local `user_phone_numbers.id`. Dispatch rechecks ownership, country, capacity and the provider binding. An explicit unavailable selection fails instead of falling back to another number; clients that omit the field retain automatic country routing. Scheduled calls persist the selection in `scheduled_calls.from_number_id` and revalidate it at execution. Removing a number leaves the stored ID intact so a queued call cannot silently acquire a different caller ID. Migration `005_scheduled_from_number.sql` must precede serving the updated scheduling API.
+
 Outbound calling was restored to disabled after the authorized test; schedulers remain disabled. The current agent is **VoiceFleet — Trades Demo Outreach** (GPT Live / Luna / low). See [the versioned sales playbook](agents/voicefleet-trades-outreach.md) for its instructions, product sources and operating limits. Calendar booking and automated follow-up are not attached to this agent; it captures requests for confirmation instead of claiming actions occurred.

@@ -1,6 +1,7 @@
 import { ownResource, ownReferences } from '../middleware/ownership.js';
 import { Router } from 'express';
 import { createDatabase } from '../db/database.js';
+import { availableUserNumbers, chooseCountryNumber, destinationPhone } from '../services/phoneRouting.js';
 
 const router = Router();
 
@@ -30,6 +31,7 @@ router.post('/calls', async (req, res) => {
             productIdea,
             companyContext,
             assistantId,
+            fromNumberId,
             maxRetries = 3,
         } = req.body;
 
@@ -43,14 +45,18 @@ router.post('/calls', async (req, res) => {
         if (!scheduledAt) {
             return res.status(400).json({ error: 'scheduledAt is required' });
         }
-        if (!productIdea) {
-            return res.status(400).json({ error: 'productIdea is required' });
+        if (!productIdea && !assistantId) {
+            return res.status(400).json({ error: 'Choose an assistant or provide product details.' });
         }
 
         // Validate scheduled time is in the future
         const scheduledTime = new Date(scheduledAt);
-        if (scheduledTime <= new Date()) {
+        if (!Number.isFinite(scheduledTime.getTime()) || scheduledTime <= new Date()) {
             return res.status(400).json({ error: 'scheduledAt must be in the future' });
+        }
+
+        if (fromNumberId != null) {
+            chooseCountryNumber(await availableUserNumbers(db, req.user.id), destinationPhone(phoneNumber), fromNumberId);
         }
 
         // Create scheduled call
@@ -63,9 +69,10 @@ router.post('/calls', async (req, res) => {
                 phone_number: phoneNumber,
                 customer_name: customerName || null,
                 scheduled_at: scheduledAt,
-                product_idea: productIdea,
+                product_idea: productIdea || '',
                 company_context: companyContext || null,
                 assistant_id: assistantId || null,
+                from_number_id: fromNumberId ?? null,
                 max_retries: maxRetries,
                 status: 'pending',
             })
@@ -85,7 +92,7 @@ router.post('/calls', async (req, res) => {
         });
     } catch (error) {
         console.error('Schedule call error:', error);
-        res.status(500).json({ error: error.message });
+        res.status(error.status || 500).json({ error: error.message, code:error.code });
     }
 });
 
@@ -178,12 +185,13 @@ router.patch('/calls/:id', async (req, res) => {
             companyContext,
             assistantId,
             maxRetries,
+            fromNumberId,
         } = req.body;
 
         // Check current status - only pending calls can be modified
         const { data: existing, error: fetchError } = await db
             .from('scheduled_calls')
-            .select('status')
+            .select('status,phone_number')
             .eq('id', id)
             .eq('user_id', req.user.id)
             .single();
@@ -218,6 +226,10 @@ router.patch('/calls/:id', async (req, res) => {
         if (companyContext !== undefined) updates.company_context = companyContext;
         if (assistantId !== undefined) updates.assistant_id = assistantId;
         if (maxRetries !== undefined) updates.max_retries = maxRetries;
+        if (fromNumberId !== undefined) {
+            if (fromNumberId !== null) chooseCountryNumber(await availableUserNumbers(db, req.user.id), destinationPhone(existing.phone_number), fromNumberId);
+            updates.from_number_id = fromNumberId;
+        }
 
         const { data, error } = await db
             .from('scheduled_calls')
@@ -239,7 +251,7 @@ router.patch('/calls/:id', async (req, res) => {
         });
     } catch (error) {
         console.error('Update scheduled call error:', error);
-        res.status(500).json({ error: error.message });
+        res.status(error.status || 500).json({ error: error.message, code:error.code });
     }
 });
 
