@@ -46,6 +46,7 @@ export const openApiDocument = {
             patch:{ summary:'Update a campaign', security, parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}}], requestBody:{required:true,...json({type:'object'})}, responses:{200:json({type:'object'}),404:json(errorSchema)} },
             delete:{ summary:'Delete a campaign', security, parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}}], responses:{200:json({type:'object'}),404:json(errorSchema)} },
         },
+        '/campaigns/{id}/recalculate': { post:{ summary:'Recalculate campaign and lead call counters', security, parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}}], responses:{200:json({type:'object'}),404:json(errorSchema)} } },
         '/assistants': {
             get:{ summary:'List voice assistants', security, responses:{200:json({type:'object'})} },
             post:{ summary:'Create a voice assistant', security, requestBody:{required:true,...json({$ref:'#/components/schemas/AssistantInput'})}, responses:{201:json({type:'object'})} },

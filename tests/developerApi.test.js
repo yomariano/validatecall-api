@@ -83,6 +83,20 @@ test('call creation blocks suppressed contacts before reaching a provider',async
     expect(result.body.error.code).toBe('contact_suppressed');
 });
 
+test('campaign reconciliation derives counters from owned call records',async()=>{
+    const key=await createKey(['data:write']);
+    const {rows:[lead]}=await database.query("INSERT INTO leads(user_id,name,phone,status) VALUES($1,'Campaign lead','+35315550123','contacted') RETURNING id",[userId]);
+    const {rows:[campaign]}=await database.query("INSERT INTO campaigns(user_id,name,product_idea,lead_ids) VALUES($1,'Counter QA','QA',ARRAY[$2]::uuid[]) RETURNING id",[userId,lead.id]);
+    await database.query(`INSERT INTO calls(user_id,lead_id,campaign_id,phone_number,status,created_at) VALUES
+        ($1,$2,$3,'+35315550123','completed',now()-interval '1 minute'),
+        ($1,$2,$3,'+35315550123','failed',now())`,[userId,lead.id,campaign.id]);
+    const result=await api(request(app).post(`/v1/campaigns/${campaign.id}/recalculate`),key.secret).expect(200);
+    expect(result.body).toMatchObject({calls_made:2,calls_completed:1,calls_failed:1});
+    const stored=await database.query('SELECT call_count,last_called_at FROM leads WHERE id=$1',[lead.id]);
+    expect(stored.rows[0].call_count).toBe(2);
+    expect(stored.rows[0].last_called_at).toBeTruthy();
+});
+
 test('key creation requires the signed-in session CSRF token',async()=>{
     await request(app).post('/api/developer/keys').set('Cookie',`${SESSION_COOKIE}=${session.token}`).send({name:'No CSRF',scopes:['data:read']}).expect(403);
     await request(app).get('/v1/account').expect(401);

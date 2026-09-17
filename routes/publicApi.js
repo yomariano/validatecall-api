@@ -157,6 +157,25 @@ router.delete('/campaigns/:id', requireScope('data:write'), handler(async (req,r
     if(!rows[0])fail('Campaign not found.',404,'not_found');
     res.json({deleted:true,id:rows[0].id});
 }));
+router.post('/campaigns/:id/recalculate', requireScope('data:write'), handler(async (req,res) => {
+    await requireOwned('campaigns',req.params.id,req.user.id,'campaign');
+    const {rows}=await database.query(`UPDATE campaigns campaign SET
+        calls_made=stats.calls_made,
+        calls_completed=stats.calls_completed,
+        calls_failed=stats.calls_failed
+        FROM (SELECT count(*)::int AS calls_made,
+            count(*) FILTER (WHERE status='completed')::int AS calls_completed,
+            count(*) FILTER (WHERE status IN ('failed','no-answer','busy','canceled','cancelled'))::int AS calls_failed
+            FROM calls WHERE user_id=$1 AND campaign_id=$2) stats
+        WHERE campaign.id=$2 AND campaign.user_id=$1 RETURNING campaign.*`,[req.user.id,req.params.id]);
+    await database.query(`UPDATE leads lead SET
+        call_count=stats.call_count,
+        last_called_at=stats.last_called_at
+        FROM (SELECT lead_id,count(*)::int AS call_count,max(created_at) AS last_called_at
+            FROM calls WHERE user_id=$1 AND lead_id IS NOT NULL GROUP BY lead_id) stats
+        WHERE lead.id=stats.lead_id AND lead.user_id=$1`,[req.user.id]);
+    res.json(withoutUser(rows[0]));
+}));
 
 router.get('/assistants', requireScope('assistants:read'), handler(async (req,res) => {
     const {rows}=await database.query("SELECT id FROM vapi_assistants WHERE user_id=$1 AND provider='assistantfleet' ORDER BY created_at DESC",[req.user.id]);
@@ -244,7 +263,17 @@ router.post('/calls', requireScope('calls:write'), handler(async (req,res) => {
         const assistantId=req.body.assistant_id||campaign?.selected_agent_id;if(!assistantId)fail('assistant_id is required when the campaign has no selected assistant.');
         const result=await dispatchFleetCall(req.user.id,{phoneNumber,customerName:req.body.customer_name||lead?.name,
             assistantId,productIdea:req.body.product_idea??campaign?.product_idea,companyContext:req.body.company_context??campaign?.company_context,fromNumberId:req.body.from_number_id});
-        if(lead||campaign)await database.query('UPDATE calls SET lead_id=$1,campaign_id=$2 WHERE user_id=$3 AND vapi_call_id=$4',[lead?.id||null,campaign?.id||null,req.user.id,result.id]);
+        if(lead||campaign)await database.query(`WITH linked AS (
+                UPDATE calls SET lead_id=$1,campaign_id=$2
+                WHERE user_id=$3 AND vapi_call_id=$4 AND lead_id IS NULL AND campaign_id IS NULL RETURNING id
+            ), lead_updated AS (
+                UPDATE leads SET call_count=COALESCE(call_count,0)+1,last_called_at=now(),
+                    status=CASE WHEN status='new' THEN 'contacted' ELSE status END
+                WHERE id=$1 AND user_id=$3 AND EXISTS (SELECT 1 FROM linked) RETURNING id
+            )
+            UPDATE campaigns SET calls_made=COALESCE(calls_made,0)+1
+            WHERE id=$2 AND user_id=$3 AND EXISTS (SELECT 1 FROM linked)`,
+            [lead?.id||null,campaign?.id||null,req.user.id,result.id]);
         const rows=await historyRows(req.user.id,{id:result.id});
         body=rows[0]?publicCall(rows[0],req):{id:result.id,status:'initiated',customer:result.customer};
     }catch(error){const failure=safeError(error);status=failure.status;body=failure.body;}

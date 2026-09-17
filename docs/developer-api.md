@@ -43,6 +43,7 @@ The calling client remains responsible for using an authorised caller ID, applyi
 - `/research/leads` — find business contacts from cited public web sources; saving remains an explicit `/leads` request.
 - `/leads` — create, list, read, update and delete contacts.
 - `/campaigns` — create, list, read, update and delete campaign definitions.
+- `/campaigns/{id}/recalculate` — reconcile campaign and lead call counters from stored call records.
 - `/assistants` — create and manage AssistantFleet GPT Live assistants.
 - `/phone-numbers` — list caller numbers and check destination readiness.
 - `/calls` — start a call and retrieve outcomes, transcripts and summaries.
