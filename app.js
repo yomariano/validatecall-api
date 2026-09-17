@@ -24,6 +24,8 @@ import userSettingsRoutes from './routes/userSettings.js';
 import sequencesRoutes from './routes/sequences.js';
 import emailTrackingRoutes from './routes/emailTracking.js';
 import workflowsRoutes from './routes/workflows.js';
+import developerRoutes from './routes/developer.js';
+import publicApiRoutes from './routes/publicApi.js';
 
 const app = express();
 
@@ -109,6 +111,7 @@ app.get('/api/assets/:id', async (req, res) => {
     } catch { res.sendStatus(503); }
 });
 app.use('/api/auth', authRoutes);
+app.use('/v1', publicApiRoutes);
 app.use('/api', createApiAuth());
 
 // API Routes
@@ -130,6 +133,7 @@ app.use('/api/settings', userSettingsRoutes);
 app.use('/api/sequences', sequencesRoutes);
 app.use('/api/email-tracking', emailTrackingRoutes);
 app.use('/api/workflows', workflowsRoutes);
+app.use('/api/developer', developerRoutes);
 
 // 404 handler
 app.use((req, res) => {
