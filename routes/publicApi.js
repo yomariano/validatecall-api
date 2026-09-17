@@ -41,7 +41,7 @@ const requireOwned = async (table,id,userId,label) => {
     return rows[0];
 };
 const page = (data,req,total=null) => ({ data:data.map(withoutUser), pagination:{ limit:limit(req.query.limit), offset:offset(req.query.offset), count:data.length, total } });
-const apiBase = req => (process.env.PUBLIC_API_URL || `${req.protocol}://${req.get('host')}/v1`).replace(/\/$/,'');
+const apiBase = req => (process.env.PUBLIC_API_URL || `${process.env.NODE_ENV==='production'?'https':req.protocol}://${req.get('host')}/v1`).replace(/\/$/,'');
 const publicCall = (row,req) => {
     const presented=presentCall(row,'');
     const {user_id,recordingUrl,...safe}=presented;
@@ -229,7 +229,8 @@ router.get('/calls/:id/recording', requireScope('recordings:read'), handler(asyn
     const upstream=await fleetResponse(`/calls/${encodeURIComponent(call.id)}/recording`,{headers:range?{Range:range}:{}});
     res.status(upstream.status).set({'Content-Type':'audio/wav','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});
     for(const name of ['content-length','content-range','accept-ranges'])if(upstream.headers.get(name))res.set(name,upstream.headers.get(name));
-    await pipeline(Readable.fromWeb(upstream.body),res);
+    try { await pipeline(Readable.fromWeb(upstream.body),res); }
+    catch { if(!res.destroyed)res.destroy(); }
 }));
 
 router.post('/calls', requireScope('calls:write'), handler(async (req,res) => {
